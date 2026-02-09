@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"flag"
 	"fmt"
 	"log"
 	"net/http"
@@ -30,6 +31,7 @@ func LoggingMiddleware(next http.Handler) http.Handler {
 		start := time.Now()
 		next.ServeHTTP(w, r)
 		log.Printf("[%s] %s took %dms", r.Method, r.URL.Path, time.Since(start).Milliseconds())
+
 	})
 }
 
@@ -72,6 +74,8 @@ func (s *Store) handleSet(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
 
+	log.Printf("key: %s | value: %s", reqBody.Key, reqBody.Value)
+
 	response := Response{
 		Message: "Success!",
 		Key:     reqBody.Key,
@@ -99,12 +103,14 @@ func (s *Store) handleGet(w http.ResponseWriter, r *http.Request) {
 
 	if !exists {
 		w.WriteHeader(http.StatusNotFound)
+		log.Printf("key: %s not found", key)
 		response = Response{
 			Message: "Key not found!",
 			Key:     key,
 		}
 	} else {
 		w.WriteHeader(http.StatusOK)
+		log.Printf("key: %s | value: %s", key, value)
 		response = Response{
 			Message: "Success!",
 			Key:     key,
@@ -118,13 +124,16 @@ func (s *Store) handleGet(w http.ResponseWriter, r *http.Request) {
 }
 
 func main() {
-	store := NewStore()
+	port := flag.String("port", "8080", "server port")
+	flag.Parse()
 
+	store := NewStore()
 	mux := http.NewServeMux()
 
 	mux.Handle("/set", LoggingMiddleware(http.HandlerFunc(store.handleSet)))
 	mux.Handle("/get", LoggingMiddleware(http.HandlerFunc(store.handleGet)))
 
-	fmt.Println("App is running!")
-	log.Fatal(http.ListenAndServe(":8080", mux))
+	addr := ":" + *port
+	fmt.Printf("VaultKV Node running on %s...\n", addr)
+	log.Fatal(http.ListenAndServe(addr, mux))
 }
