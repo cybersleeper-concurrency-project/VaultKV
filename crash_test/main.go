@@ -15,7 +15,7 @@ const BASE_URL_GET = "http://localhost:8080/get"
 const ITER_COUNT = 20
 const COMMAND_TYPE = "SET"
 
-const LOAD_COUNT = 100000
+const LOAD_COUNT = 1000
 const CONCURRENCY_LIMIT = 100
 
 func main() {

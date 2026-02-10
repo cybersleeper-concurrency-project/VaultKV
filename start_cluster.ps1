@@ -7,10 +7,11 @@ Stop-Process -Name "node", "router" -ErrorAction SilentlyContinue
 # 2. Compile the binaries
 #    Compiling is better than 'go run' for background processes
 Write-Host "Compiling Node..." -ForegroundColor Cyan
-go build -o node.exe main.go
+Write-Host "Compiling Node..." -ForegroundColor Cyan
+go build -o node.exe ./cmd/node
 
 Write-Host "Compiling Router..." -ForegroundColor Cyan
-go build -o router.exe router/router.go
+go build -o router.exe ./cmd/router
 
 # 3. Start 3 Nodes (Ports 8081, 8082, 8083)
 Write-Host "Starting Node A on :8081..." -ForegroundColor Green
