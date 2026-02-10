@@ -3,35 +3,14 @@ package proxy
 import (
 	"bytes"
 	"encoding/json"
-	"hash/fnv"
 	"io"
 	"net/http"
-	"time"
+
+	"vault-kv/internal/cluster"
 )
-
-var Nodes = []string{
-	"http://localhost:8081",
-	"http://localhost:8082",
-	"http://localhost:8083",
-}
-
-var Client = &http.Client{
-	Transport: &http.Transport{
-		MaxIdleConns:        100,
-		MaxIdleConnsPerHost: 100,
-		IdleConnTimeout:     90 * time.Second,
-	},
-	Timeout: 5 * time.Second,
-}
 
 type KeyCheck struct {
 	Key string `json:"key"`
-}
-
-func HashKey(key string) int {
-	h := fnv.New32a()
-	h.Write([]byte(key))
-	return int(h.Sum32()) % len(Nodes)
 }
 
 func HandleProxy(w http.ResponseWriter, r *http.Request) {
@@ -65,8 +44,8 @@ func HandleProxy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	targetNodeIdx := HashKey(key)
-	targetNodeUrl := Nodes[targetNodeIdx] + r.URL.RequestURI()
+	targetNodeIdx := cluster.HashKey(key)
+	targetNodeUrl := cluster.Nodes[targetNodeIdx] + r.URL.RequestURI()
 
 	proxyReq, err := http.NewRequestWithContext(r.Context(), r.Method, targetNodeUrl, r.Body)
 	if err != nil {
@@ -83,7 +62,7 @@ func HandleProxy(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	resp, err := Client.Do(proxyReq)
+	resp, err := cluster.Client.Do(proxyReq)
 	if err != nil {
 		http.Error(w, "Node Down: "+err.Error(), http.StatusBadGateway)
 		return
