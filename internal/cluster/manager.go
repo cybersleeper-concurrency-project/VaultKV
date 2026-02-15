@@ -26,6 +26,7 @@ func Init(cfg *config.Config) {
 		Transport: &http.Transport{
 			MaxIdleConns:        cfg.HTTPClient.MaxIdleConns,
 			MaxIdleConnsPerHost: cfg.HTTPClient.MaxIdleConnsPerHost,
+			MaxConnsPerHost:     cfg.HTTPClient.MaxConnsPerHost,
 			IdleConnTimeout:     timeout,
 		},
 		Timeout: 5 * time.Second,

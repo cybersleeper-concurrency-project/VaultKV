@@ -3,6 +3,7 @@ package config
 import (
 	"encoding/json"
 	"os"
+	"strconv"
 	"strings"
 )
 
@@ -18,6 +19,7 @@ type Config struct {
 	HTTPClient struct {
 		MaxIdleConns        int    `json:"max_idle_conns"`
 		MaxIdleConnsPerHost int    `json:"max_idle_conns_per_host"`
+		MaxConnsPerHost     int    `json:"max_conns_per_host"`
 		IdleConnTimeout     string `json:"idle_conn_timeout"`
 	} `json:"http_client"`
 }
@@ -44,6 +46,13 @@ func LoadConfig(path string) (*Config, error) {
 	}
 	if nodes := os.Getenv("VAULT_CLUSTER_NODES"); nodes != "" {
 		cfg.Cluster.Nodes = strings.Split(nodes, ",")
+	}
+	if val := os.Getenv("VAULT_CLUSTER_MAX_CONCURRENCY"); val != "" {
+		maxConcurrency, err := strconv.Atoi(val)
+		if err != nil {
+			return nil, err
+		}
+		cfg.Cluster.MaxConcurrency = maxConcurrency
 	}
 
 	return cfg, nil
