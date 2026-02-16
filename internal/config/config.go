@@ -8,20 +8,25 @@ import (
 )
 
 type Config struct {
-	Server struct {
-		Port    string `json:"port"`
-		Timeout string `json:"timeout"`
-	} `json:"server"`
-	Cluster struct {
-		Nodes          []string `json:"nodes"`
-		MaxConcurrency int      `json:"max_concurrency"`
-	} `json:"cluster"`
-	HTTPClient struct {
-		MaxIdleConns        int    `json:"max_idle_conns"`
-		MaxIdleConnsPerHost int    `json:"max_idle_conns_per_host"`
-		MaxConnsPerHost     int    `json:"max_conns_per_host"`
-		IdleConnTimeout     string `json:"idle_conn_timeout"`
-	} `json:"http_client"`
+	Server     Server     `json:"server"`
+	Cluster    Cluster    `json:"cluster"`
+	HTTPClient HttpClient `json:"http_client"`
+}
+
+type Server struct {
+	Port    string `json:"port"`
+	Timeout string `json:"timeout"`
+}
+
+type Cluster struct {
+	Nodes          []string `json:"nodes"`
+	MaxConcurrency int      `json:"max_concurrency"`
+}
+type HttpClient struct {
+	MaxIdleConns        int    `json:"max_idle_conns"`
+	MaxIdleConnsPerHost int    `json:"max_idle_conns_per_host"`
+	MaxConnsPerHost     int    `json:"max_conns_per_host"`
+	IdleConnTimeout     string `json:"idle_conn_timeout"`
 }
 
 func LoadConfig(path string) (*Config, error) {

@@ -1,40 +1,56 @@
 package cluster
 
 import (
-	"log"
-	"net/http"
-	"time"
+	"hash/crc32"
+	"slices"
+	"sort"
+	"strconv"
 
 	"vault-kv/internal/config"
 )
 
-var (
-	Nodes  []string
-	Client *http.Client
-)
+func Init(cfg *config.Config) Cluster {
+	clusterBuilder := NewClusterBuilder()
+	clusterBuilder.SetReplicas(50)
+	clusterBuilder.SetNodes(cfg.Cluster.Nodes)
+	clusterBuilder.SetHttpClient(cfg.HTTPClient)
+	clusterBuilder.SetServerTimeout(cfg.Server.Timeout)
 
-func Init(cfg *config.Config) {
-	Nodes = cfg.Cluster.Nodes
+	return clusterBuilder.Build()
+}
 
-	timeout, err := time.ParseDuration(cfg.HTTPClient.IdleConnTimeout)
-	if err != nil {
-		log.Printf("Invalid IdleConnTimeout, defaulting to 90s: %v", err)
-		timeout = 90 * time.Second
+func (c *ConsistentHash) AddNode(node string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	for idx := range c.replicas {
+		strIdx := strconv.Itoa(idx)
+		vKey := node + "#" + strIdx
+
+		hash := crc32.ChecksumIEEE([]byte(vKey))
+		c.keys = append(c.keys, hash)
+		c.hashMap[hash] = node
 	}
 
-	Client = &http.Client{
-		Transport: &http.Transport{
-			MaxIdleConns:        cfg.HTTPClient.MaxIdleConns,
-			MaxIdleConnsPerHost: cfg.HTTPClient.MaxIdleConnsPerHost,
-			MaxConnsPerHost:     cfg.HTTPClient.MaxConnsPerHost,
-			IdleConnTimeout:     timeout,
-		},
-		Timeout: 5 * time.Second,
+	slices.Sort(c.keys)
+}
+
+func (c *ConsistentHash) GetNode(key string) string {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+
+	if len(c.keys) == 0 {
+		return ""
 	}
 
-	if cfg.Server.Timeout != "" {
-		if t, err := time.ParseDuration(cfg.Server.Timeout); err == nil {
-			Client.Timeout = t
-		}
+	hash := crc32.ChecksumIEEE([]byte(key))
+	nodeIdx := sort.Search(len(c.keys), func(i int) bool {
+		return c.keys[i] >= hash
+	})
+
+	if nodeIdx == len(c.keys) {
+		nodeIdx = 0
 	}
+
+	return c.hashMap[c.keys[nodeIdx]]
 }

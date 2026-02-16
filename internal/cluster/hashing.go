@@ -1,9 +1,19 @@
 package cluster
 
-import "hash/fnv"
+import (
+	"sync"
+)
 
-func HashKey(key string) int {
-	h := fnv.New32a()
-	h.Write([]byte(key))
-	return int(h.Sum32()) % len(Nodes)
+type ConsistentHash struct {
+	replicas int
+	keys     []uint32
+	hashMap  map[uint32]string
+	mu       sync.RWMutex
+}
+
+func NewConsistentHash(replicas int) *ConsistentHash {
+	return &ConsistentHash{
+		replicas: replicas,
+		hashMap:  make(map[uint32]string),
+	}
 }

@@ -16,9 +16,13 @@ func main() {
 		log.Fatalf("Failed to load config: %v", err)
 	}
 
-	cluster.Init(cfg)
+	c := cluster.Init(cfg)
 
-	http.HandleFunc("/", proxy.HandleProxy)
+	ph := &proxy.ProxyHandler{
+		Cluster: &c,
+	}
+
+	http.Handle("/", ph)
 
 	port := cfg.Server.Port
 	if port == "" {

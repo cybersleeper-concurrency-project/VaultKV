@@ -13,7 +13,11 @@ type KeyCheck struct {
 	Key string `json:"key"`
 }
 
-func HandleProxy(w http.ResponseWriter, r *http.Request) {
+type ProxyHandler struct {
+	Cluster *cluster.Cluster
+}
+
+func (h *ProxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	var key string
 	var bodyLen int64
 
@@ -44,8 +48,8 @@ func HandleProxy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	targetNodeIdx := cluster.HashKey(key)
-	targetNodeUrl := cluster.Nodes[targetNodeIdx] + r.URL.RequestURI()
+	targetNode := h.Cluster.GetNode(key)
+	targetNodeUrl := targetNode + r.URL.RequestURI()
 
 	proxyReq, err := http.NewRequestWithContext(r.Context(), r.Method, targetNodeUrl, r.Body)
 	if err != nil {
@@ -62,7 +66,7 @@ func HandleProxy(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	resp, err := cluster.Client.Do(proxyReq)
+	resp, err := h.Cluster.Client.Do(proxyReq)
 	if err != nil {
 		http.Error(w, "Node Down: "+err.Error(), http.StatusBadGateway)
 		return
