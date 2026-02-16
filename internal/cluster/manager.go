@@ -2,19 +2,40 @@ package cluster
 
 import (
 	"hash/crc32"
+	"log"
 	"slices"
 	"sort"
 	"strconv"
+	"time"
 
 	"vault-kv/internal/config"
 )
 
 func Init(cfg *config.Config) Cluster {
 	clusterBuilder := NewClusterBuilder()
-	clusterBuilder.SetReplicas(50)
+
+	idleTimeout, err := time.ParseDuration(cfg.HTTPClient.IdleConnTimeout)
+	if err != nil {
+		log.Printf("Invalid IdleConnTimeout, defaulting to 90s: %v", err)
+		idleTimeout = 90 * time.Second
+	}
+	clusterBuilder.SetIdleConnTimeout(idleTimeout)
+
+	if cfg.Cluster.Replicas == 0 {
+		cfg.Cluster.Replicas = 50
+	}
+	clusterBuilder.SetReplicas(cfg.Cluster.Replicas)
+
+	serverTimeout := 5 * time.Second
+	if cfg.Server.Timeout != "" {
+		if t, err := time.ParseDuration(cfg.Server.Timeout); err == nil {
+			serverTimeout = t
+		}
+	}
+	clusterBuilder.SetServerTimeout(serverTimeout)
+
 	clusterBuilder.SetNodes(cfg.Cluster.Nodes)
 	clusterBuilder.SetHttpClient(cfg.HTTPClient)
-	clusterBuilder.SetServerTimeout(cfg.Server.Timeout)
 
 	return clusterBuilder.Build()
 }

@@ -21,6 +21,7 @@ type Server struct {
 type Cluster struct {
 	Nodes          []string `json:"nodes"`
 	MaxConcurrency int      `json:"max_concurrency"`
+	Replicas       int      `json:"replicas"`
 }
 type HttpClient struct {
 	MaxIdleConns        int    `json:"max_idle_conns"`

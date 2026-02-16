@@ -14,7 +14,7 @@ type KeyCheck struct {
 }
 
 type ProxyHandler struct {
-	Cluster *cluster.Cluster
+	Cluster cluster.ClusterInterface
 }
 
 func (h *ProxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -66,7 +66,7 @@ func (h *ProxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	resp, err := h.Cluster.Client.Do(proxyReq)
+	resp, err := h.Cluster.GetClient().Do(proxyReq)
 	if err != nil {
 		http.Error(w, "Node Down: "+err.Error(), http.StatusBadGateway)
 		return
