@@ -16,7 +16,7 @@ const ITER_COUNT = 20
 const COMMAND_TYPE = "SET"
 
 const LOAD_COUNT = 1000
-const CONCURRENCY_LIMIT = 100
+const CONCURRENCY_LIMIT = 50
 
 func main() {
 	t := &http.Transport{
@@ -56,6 +56,10 @@ func main() {
 					// fmt.Printf("Error: %v\n", err)
 					return
 				}
+				if resp.StatusCode != http.StatusOK {
+					errCnt++
+					// fmt.Printf("Error Status: %d\n", resp.StatusCode)
+				}
 
 				io.Copy(ioutil.Discard, resp.Body)
 				resp.Body.Close()
@@ -65,9 +69,11 @@ func main() {
 		wg.Wait()
 
 		duration := time.Since(start).Milliseconds()
+		rps := float64(LOAD_COUNT) / (float64(duration) / 1000)
 
 		fmt.Printf("Test #%d\n", tt+1)
 		fmt.Printf("Duration: %dms\n", duration)
+		fmt.Printf("RPS: %.2f\n", rps)
 		fmt.Printf("Err count: %d\n", errCnt)
 		fmt.Printf("Err rate: %.2f%%\n", float64(errCnt)/LOAD_COUNT*100)
 		fmt.Printf("==================================\n")
@@ -78,8 +84,12 @@ func main() {
 		time.Sleep(5 * time.Second)
 	}
 
-	fmt.Printf("Avg time: %d\n", avgTime/ITER_COUNT)
-	fmt.Printf("Avg rrr rate: %.2f%%\n", float64(avgErr)/ITER_COUNT/LOAD_COUNT*100)
+	avgTimeFinal := avgTime / ITER_COUNT
+	avgRps := float64(LOAD_COUNT) / (float64(avgTimeFinal) / 1000)
+
+	fmt.Printf("Avg time: %dms\n", avgTimeFinal)
+	fmt.Printf("Avg RPS: %.2f\n", avgRps)
+	fmt.Printf("Avg err rate: %.2f%%\n", float64(avgErr)/ITER_COUNT/LOAD_COUNT*100)
 	fmt.Printf("==================================\n")
 
 }
