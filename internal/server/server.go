@@ -2,7 +2,7 @@ package server
 
 import (
 	"encoding/json"
-	"log"
+	"log/slog"
 	"net/http"
 	"time"
 
@@ -32,7 +32,7 @@ func LoggingMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
 		next.ServeHTTP(w, r)
-		log.Printf("[%s] %s took %dms", r.Method, r.URL.Path, time.Since(start).Milliseconds())
+		slog.Info("Request processed", "method", r.Method, "path", r.URL.Path, "duration_ms", time.Since(start).Milliseconds())
 	})
 }
 
@@ -56,7 +56,7 @@ func (s *Server) HandleSet(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
 
-	log.Printf("key: %s | value: %s", reqBody.Key, reqBody.Value)
+	slog.Debug("Handle Set Request", "key", reqBody.Key, "value", reqBody.Value)
 
 	response := Response{
 		Message: "Success!",
@@ -85,19 +85,21 @@ func (s *Server) HandleGet(w http.ResponseWriter, r *http.Request) {
 
 	if !exists {
 		w.WriteHeader(http.StatusNotFound)
-		log.Printf("key: %s not found", key)
+		slog.Warn("Key not found", "key", key)
 		response = Response{
 			Message: "Key not found!",
 			Key:     key,
 		}
-	} else {
-		w.WriteHeader(http.StatusOK)
-		log.Printf("key: %s | value: %s", key, value)
-		response = Response{
-			Message: "Success!",
-			Key:     key,
-			Value:   value,
-		}
+		http.Error(w, "Key not found", http.StatusNotFound)
+		return
+	}
+
+	w.WriteHeader(http.StatusOK)
+	slog.Debug("Handle Get", "key", key, "value", value)
+	response = Response{
+		Message: "Success!",
+		Key:     key,
+		Value:   value,
 	}
 
 	if err := json.NewEncoder(w).Encode(response); err != nil {

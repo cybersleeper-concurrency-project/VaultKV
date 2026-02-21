@@ -7,7 +7,8 @@ Write-Host "=== CHAOS TEST STARTED ===" -ForegroundColor Cyan -BackgroundColor B
 if (Test-Path ".\start_cluster.ps1") {
     Write-Host "Starting Cluster..."
     & .\start_cluster.ps1
-} else {
+}
+else {
     Write-Error "Please run this script from the project root directory (e.g., .\test\chaos_test.ps1)."
     exit 1
 }
@@ -22,8 +23,8 @@ Start-Sleep -Seconds 5
 Write-Host "Starting Crash Test (20 iterations)..." -ForegroundColor Yellow
 $loadTest = Start-Process go -ArgumentList "run .\test\crash_test\main.go" -NoNewWindow -PassThru
 
-# 4. Let it run for ~10 seconds (approx 2 iterations)
-Start-Sleep -Seconds 10
+# 4. Let it run for ~30 seconds (approx 2 iterations)
+Start-Sleep -Seconds 30
 
 # 5. KILL NODE B (Port 8082)
 Write-Host "`n!!! KILLING NODE B (Port 8082) !!!" -ForegroundColor Red -BackgroundColor Black
@@ -33,13 +34,14 @@ try {
     $pidToKill = $conn.OwningProcess
     Stop-Process -Id $pidToKill -Force
     Write-Host "Node B (PID: $pidToKill) Killed."
-} catch {
+}
+catch {
     Write-Warning "Could not find/kill Node B on port 8082: $_"
 }
 
-# 6. Let it run in DEGRADED State for ~10 seconds
-Write-Host "Running in DEGRADED State for 10s..."
-Start-Sleep -Seconds 10
+# 6. Let it run in DEGRADED State for ~30 seconds
+Write-Host "Running in DEGRADED State for 30s..."
+Start-Sleep -Seconds 30
 
 # 7. Restart Node B
 Write-Host "`n!!! RESTARTING NODE B !!!" -ForegroundColor Green -BackgroundColor Black
