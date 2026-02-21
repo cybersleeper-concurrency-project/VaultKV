@@ -7,11 +7,14 @@ import (
 )
 
 type ClusterBuilder struct {
-	nodes           []string
-	httpClient      config.HttpClient
-	replicas        int
-	serverTimeout   time.Duration
-	idleConnTimeout time.Duration
+	nodes                   []string
+	httpMaxIdleConns        int
+	httpMaxIdleConnsPerHost int
+	httpMaxConnsPerHost     int
+	httpIdleConnTimeout     string
+	replicas                int
+	serverTimeout           time.Duration
+	idleConnTimeout         time.Duration
 }
 
 type Cluster struct {
@@ -29,8 +32,11 @@ func (c *ClusterBuilder) SetNodes(nodes []string) *ClusterBuilder {
 	return c
 }
 
-func (c *ClusterBuilder) SetHttpClient(httpClient config.HttpClient) *ClusterBuilder {
-	c.httpClient = httpClient
+func (c *ClusterBuilder) SetHttpClient(cfg *config.Config) *ClusterBuilder {
+	c.httpMaxIdleConns = cfg.HttpMaxIdleConns
+	c.httpMaxIdleConnsPerHost = cfg.HttpMaxIdleConnsPerHost
+	c.httpMaxConnsPerHost = cfg.HttpMaxConnsPerHost
+	c.httpIdleConnTimeout = cfg.HttpIdleConnTimeout
 	return c
 }
 
@@ -41,11 +47,6 @@ func (c *ClusterBuilder) SetReplicas(replicas int) *ClusterBuilder {
 
 func (c *ClusterBuilder) SetServerTimeout(serverTimeout time.Duration) *ClusterBuilder {
 	c.serverTimeout = serverTimeout
-	return c
-}
-
-func (c *ClusterBuilder) SetIdleConnTimeout(idleTimeout time.Duration) *ClusterBuilder {
-	c.idleConnTimeout = idleTimeout
 	return c
 }
 
@@ -62,9 +63,9 @@ func (c *ClusterBuilder) Build() Cluster {
 
 	client := &http.Client{
 		Transport: &http.Transport{
-			MaxIdleConns:        c.httpClient.MaxIdleConns,
-			MaxIdleConnsPerHost: c.httpClient.MaxIdleConnsPerHost,
-			MaxConnsPerHost:     c.httpClient.MaxConnsPerHost,
+			MaxIdleConns:        c.httpMaxIdleConns,
+			MaxIdleConnsPerHost: c.httpMaxIdleConnsPerHost,
+			MaxConnsPerHost:     c.httpMaxConnsPerHost,
 			IdleConnTimeout:     c.idleConnTimeout,
 		},
 		Timeout: c.serverTimeout,

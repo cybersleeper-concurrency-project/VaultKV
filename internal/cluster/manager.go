@@ -2,7 +2,6 @@ package cluster
 
 import (
 	"hash/crc32"
-	"log"
 	"slices"
 	"sort"
 	"strconv"
@@ -14,28 +13,21 @@ import (
 func Init(cfg *config.Config) Cluster {
 	clusterBuilder := NewClusterBuilder()
 
-	idleTimeout, err := time.ParseDuration(cfg.HTTPClient.IdleConnTimeout)
-	if err != nil {
-		log.Printf("Invalid IdleConnTimeout, defaulting to 90s: %v", err)
-		idleTimeout = 90 * time.Second
+	if cfg.ClusterReplicas == 0 {
+		cfg.ClusterReplicas = 50
 	}
-	clusterBuilder.SetIdleConnTimeout(idleTimeout)
-
-	if cfg.Cluster.Replicas == 0 {
-		cfg.Cluster.Replicas = 50
-	}
-	clusterBuilder.SetReplicas(cfg.Cluster.Replicas)
+	clusterBuilder.SetReplicas(cfg.ClusterReplicas)
 
 	serverTimeout := 5 * time.Second
-	if cfg.Server.Timeout != "" {
-		if t, err := time.ParseDuration(cfg.Server.Timeout); err == nil {
+	if cfg.ServerTimeout != "" {
+		if t, err := time.ParseDuration(cfg.ServerTimeout); err == nil {
 			serverTimeout = t
 		}
 	}
 	clusterBuilder.SetServerTimeout(serverTimeout)
 
-	clusterBuilder.SetNodes(cfg.Cluster.Nodes)
-	clusterBuilder.SetHttpClient(cfg.HTTPClient)
+	clusterBuilder.SetNodes(cfg.ClusterNodes)
+	clusterBuilder.SetHttpClient(cfg)
 
 	return clusterBuilder.Build()
 }

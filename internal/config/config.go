@@ -1,65 +1,49 @@
 package config
 
 import (
-	"encoding/json"
-	"os"
-	"strconv"
 	"strings"
+
+	"github.com/joho/godotenv"
+	"github.com/spf13/viper"
 )
 
 type Config struct {
-	Server     Server     `json:"server"`
-	Cluster    Cluster    `json:"cluster"`
-	HTTPClient HttpClient `json:"http_client"`
-}
-
-type Server struct {
-	Port    string `json:"port"`
-	Timeout string `json:"timeout"`
+	ServerPort              string   `mapstructure:"SERVER_PORT"`
+	ServerTimeout           string   `mapstructure:"SERVER_TIMEOUT"`
+	LogLevel                string   `mapstructure:"LOG_LEVEL"`
+	ClusterNodes            []string `mapstructure:"CLUSTER_NODES"`
+	ClusterMaxConcurrency   int      `mapstructure:"CLUSTER_MAX_CONCURRENCY"`
+	ClusterReplicas         int      `mapstructure:"CLUSTER_REPLICAS"`
+	HttpMaxIdleConns        int      `mapstructure:"HTTP_MAX_IDLE_CONNS"`
+	HttpMaxIdleConnsPerHost int      `mapstructure:"HTTP_MAX_IDLE_CONNS_PER_HOST"`
+	HttpMaxConnsPerHost     int      `mapstructure:"HTTP_MAX_CONNS_PER_HOST"`
+	HttpIdleConnTimeout     string   `mapstructure:"HTTP_IDLE_CONN_TIMEOUT"`
 }
 
 type Cluster struct {
-	Nodes          []string `json:"nodes"`
-	MaxConcurrency int      `json:"max_concurrency"`
-	Replicas       int      `json:"replicas"`
 }
 type HttpClient struct {
-	MaxIdleConns        int    `json:"max_idle_conns"`
-	MaxIdleConnsPerHost int    `json:"max_idle_conns_per_host"`
-	MaxConnsPerHost     int    `json:"max_conns_per_host"`
-	IdleConnTimeout     string `json:"idle_conn_timeout"`
 }
 
-func LoadConfig(path string) (*Config, error) {
-	file, err := os.Open(path)
-	if err != nil {
+func LoadConfig(prefix string) (*Config, error) {
+	_ = godotenv.Load(".env")
+
+	viper.SetConfigName("config")
+	viper.SetConfigType("json")
+	viper.AddConfigPath(".")
+
+	viper.SetEnvPrefix(prefix)
+	viper.SetEnvKeyReplacer(strings.NewReplacer(".", "_"))
+	viper.AutomaticEnv()
+
+	if err := viper.ReadInConfig(); err != nil {
 		return nil, err
 	}
-	defer file.Close()
 
-	cfg := &Config{}
-	decoder := json.NewDecoder(file)
-	if err := decoder.Decode(cfg); err != nil {
+	var config Config
+	if err := viper.Unmarshal(&config); err != nil {
 		return nil, err
 	}
 
-	// Environment variable overrides
-	if port := os.Getenv("VAULT_SERVER_PORT"); port != "" {
-		cfg.Server.Port = port
-	}
-	if timeout := os.Getenv("VAULT_SERVER_TIMEOUT"); timeout != "" {
-		cfg.Server.Timeout = timeout
-	}
-	if nodes := os.Getenv("VAULT_CLUSTER_NODES"); nodes != "" {
-		cfg.Cluster.Nodes = strings.Split(nodes, ",")
-	}
-	if val := os.Getenv("VAULT_CLUSTER_MAX_CONCURRENCY"); val != "" {
-		maxConcurrency, err := strconv.Atoi(val)
-		if err != nil {
-			return nil, err
-		}
-		cfg.Cluster.MaxConcurrency = maxConcurrency
-	}
-
-	return cfg, nil
+	return &config, nil
 }
