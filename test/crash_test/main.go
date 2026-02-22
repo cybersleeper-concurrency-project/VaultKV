@@ -15,7 +15,7 @@ const BASE_URL_SET = "http://localhost:8080/set"
 const BASE_URL_GET = "http://localhost:8080/get"
 const ITER_COUNT = 20
 
-// SET, GET, MIX
+// SET | GET | MIX
 const COMMAND_TYPE = "MIX"
 
 const INIT_SET = true

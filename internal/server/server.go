@@ -21,10 +21,10 @@ type KeyValueRequest struct {
 }
 
 type Server struct {
-	store *store.Store
+	store store.Engine
 }
 
-func NewServer(s *store.Store) *Server {
+func NewServer(s store.Engine) *Server {
 	return &Server{store: s}
 }
 

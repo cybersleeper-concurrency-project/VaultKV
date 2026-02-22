@@ -2,6 +2,11 @@ package store
 
 import "sync"
 
+type Engine interface {
+	Set(key, value string) error
+	Get(key string) (string, bool)
+}
+
 type Store struct {
 	data map[string]string
 	mu   sync.RWMutex
