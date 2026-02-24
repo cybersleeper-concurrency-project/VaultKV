@@ -1,6 +1,9 @@
 package store
 
-import "sync"
+import (
+	"log/slog"
+	"sync"
+)
 
 type Engine interface {
 	Set(key, value string) error
@@ -13,8 +16,35 @@ type Store struct {
 }
 
 func NewStore() *Store {
+	data := make(map[string]string)
+
+	wal, err := NewWAL("vault.wal")
+	if err != nil {
+		slog.Warn("Error when initializing the WAL", "err", err)
+		return &Store{
+			data: data,
+		}
+	}
+
+	entries, err := wal.ReadAll()
+	if err != nil {
+		slog.Warn("Error when reading WAL entries", "err", err)
+		return &Store{
+			data: data,
+		}
+	}
+
+	for _, v := range entries {
+		if v.Type == RecordTypePut {
+			data[v.Key] = v.Value
+		}
+		if v.Type == RecordTypeDelete {
+			delete(data, v.Key)
+		}
+	}
+
 	return &Store{
-		data: make(map[string]string),
+		data: data,
 	}
 }
 
