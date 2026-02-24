@@ -52,7 +52,7 @@ func NewStore() *Store {
 	}
 }
 
-func (s *Store) Set(key, value string) {
+func (s *Store) Set(key, value string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -61,9 +61,12 @@ func (s *Store) Set(key, value string) {
 		Key:   key,
 		Value: value,
 	})
-	if err == nil {
-		s.data[key] = value
+	if err != nil {
+		return err
 	}
+
+	s.data[key] = value
+	return nil
 }
 
 func (s *Store) Get(key string) (string, bool) {
