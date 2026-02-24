@@ -13,6 +13,7 @@ type Engine interface {
 type Store struct {
 	data map[string]string
 	mu   sync.RWMutex
+	wal  *WAL
 }
 
 func NewStore() *Store {
@@ -23,6 +24,7 @@ func NewStore() *Store {
 		slog.Warn("Error when initializing the WAL", "err", err)
 		return &Store{
 			data: data,
+			wal:  wal,
 		}
 	}
 
@@ -31,6 +33,7 @@ func NewStore() *Store {
 		slog.Warn("Error when reading WAL entries", "err", err)
 		return &Store{
 			data: data,
+			wal:  wal,
 		}
 	}
 
@@ -45,13 +48,22 @@ func NewStore() *Store {
 
 	return &Store{
 		data: data,
+		wal:  wal,
 	}
 }
 
 func (s *Store) Set(key, value string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.data[key] = value
+
+	err := s.wal.Append(&LogEntry{
+		Type:  RecordTypePut,
+		Key:   key,
+		Value: value,
+	})
+	if err == nil {
+		s.data[key] = value
+	}
 }
 
 func (s *Store) Get(key string) (string, bool) {
