@@ -16,12 +16,14 @@ type Store struct {
 	wal  *WAL
 }
 
-func NewStore() *Store {
+func NewStore(nodeID string) *Store {
 	data := make(map[string]string)
 
-	wal, err := NewWAL("vault.wal")
+	filename := "vault_" + nodeID + ".wal"
+
+	wal, err := NewWAL(filename)
 	if err != nil {
-		slog.Warn("Error when initializing the WAL", "err", err)
+		slog.Error("Error when initializing the WAL", "err", err)
 		return &Store{
 			data: data,
 			wal:  wal,
@@ -30,7 +32,7 @@ func NewStore() *Store {
 
 	entries, err := wal.ReadAll()
 	if err != nil {
-		slog.Warn("Error when reading WAL entries", "err", err)
+		slog.Error("Error when reading WAL entries", "err", err)
 		return &Store{
 			data: data,
 			wal:  wal,

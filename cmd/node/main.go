@@ -23,7 +23,7 @@ func main() {
 	port := flag.String("port", "8080", "server port")
 	flag.Parse()
 
-	kvStore := store.NewStore()
+	kvStore := store.NewStore(*port)
 	srv := server.NewServer(kvStore)
 	mux := http.NewServeMux()
 
