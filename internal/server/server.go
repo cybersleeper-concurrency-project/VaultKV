@@ -45,13 +45,15 @@ func (s *Server) HandleSet(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var reqBody KeyValueRequest
-	err := json.NewDecoder(r.Body).Decode(&reqBody)
-	if err != nil {
+	if err := json.NewDecoder(r.Body).Decode(&reqBody); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 
-	s.store.Set(reqBody.Key, reqBody.Value)
+	if err := s.store.Set(reqBody.Key, reqBody.Value); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)

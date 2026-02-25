@@ -1,7 +1,10 @@
 package store
 
 import (
+	"bytes"
 	"encoding/binary"
+	"fmt"
+	"hash/crc32"
 	"io"
 	"os"
 	"sync"
@@ -60,7 +63,7 @@ func (w *WAL) ReadAll() ([]*LogEntry, error) {
 		entry := &LogEntry{}
 		err := entry.Decode(w.file)
 		if err != nil {
-			if err == io.EOF {
+			if err == io.EOF || err == io.ErrUnexpectedEOF {
 				break
 			}
 			return nil, err
@@ -91,17 +94,40 @@ func BatchBinaryRead(r io.Reader, values ...any) error {
 func (e *LogEntry) Encode(w io.Writer) error {
 	keyLen := uint16(len(e.Key))
 	valLen := uint32(len(e.Value))
+	var buf bytes.Buffer
 
-	BatchBinaryWrite(w, e.Type, keyLen, valLen, e.Key, e.Value)
+	if err := BatchBinaryWrite(&buf, e.Type, keyLen, valLen); err != nil {
+		return err
+	}
+
+	if _, err := buf.Write([]byte(e.Key)); err != nil {
+		return err
+	}
+	if _, err := buf.Write([]byte(e.Value)); err != nil {
+		return err
+	}
+
+	data := buf.Bytes()
+	checksum := crc32.ChecksumIEEE(data)
+
+	if err := binary.Write(w, binary.LittleEndian, checksum); err != nil {
+		return err
+	}
+	if _, err := w.Write(data); err != nil {
+		return err
+	}
 
 	return nil
 }
 
 func (e *LogEntry) Decode(r io.Reader) error {
+	var checksum uint32
 	var keyLen uint16
 	var valLen uint32
 
-	BatchBinaryRead(r, &e.Type, &keyLen, &valLen)
+	if err := BatchBinaryRead(r, &checksum, &e.Type, &keyLen, &valLen); err != nil {
+		return err
+	}
 
 	keyBytes := make([]byte, keyLen)
 	valBytes := make([]byte, valLen)
@@ -111,6 +137,13 @@ func (e *LogEntry) Decode(r io.Reader) error {
 	}
 	if _, err := io.ReadFull(r, valBytes); err != nil {
 		return err
+	}
+
+	var buf bytes.Buffer
+	BatchBinaryWrite(&buf, e.Type, keyLen, valLen, keyBytes, valBytes)
+
+	if crc32.ChecksumIEEE(buf.Bytes()) != checksum {
+		return fmt.Errorf("Corrupted log entry detected! Expected checksum: %d", checksum)
 	}
 
 	e.Key = string(keyBytes)
