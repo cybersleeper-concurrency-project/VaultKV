@@ -23,7 +23,10 @@ func main() {
 	port := flag.String("port", "8080", "server port")
 	flag.Parse()
 
-	kvStore := store.NewStore(*port)
+	kvStore, err := store.NewStore(*port)
+	if err != nil {
+		log.Fatalf("Failed to initiate the store: %v", err)
+	}
 	srv := server.NewServer(kvStore)
 	mux := http.NewServeMux()
 

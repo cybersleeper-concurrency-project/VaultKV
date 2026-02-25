@@ -1,9 +1,13 @@
 package store
 
 import (
-	"log/slog"
+	"errors"
+	"fmt"
+	"regexp"
 	"sync"
 )
+
+var validNodeID = regexp.MustCompile(`^[a-zA-Z0-9_-]+$`)
 
 type Engine interface {
 	Set(key, value string) error
@@ -16,27 +20,24 @@ type Store struct {
 	wal  *WAL
 }
 
-func NewStore(nodeID string) *Store {
+func NewStore(nodeID string) (*Store, error) {
+	if !validNodeID.MatchString(nodeID) {
+		return nil, fmt.Errorf("invalid nodeID: %q", nodeID)
+	}
+
 	data := make(map[string]string)
 
 	filename := "vault_" + nodeID + ".wal"
 
 	wal, err := NewWAL(filename)
 	if err != nil {
-		slog.Error("Error when initializing the WAL", "err", err)
-		return &Store{
-			data: data,
-			wal:  wal,
-		}
+		return nil, fmt.Errorf("initializing WAL: %w", err)
 	}
 
 	entries, err := wal.ReadAll()
 	if err != nil {
-		slog.Error("Error when reading WAL entries", "err", err)
-		return &Store{
-			data: data,
-			wal:  wal,
-		}
+		wal.Close()
+		return nil, fmt.Errorf("reading WAL entries: %w", err)
 	}
 
 	for _, v := range entries {
@@ -51,10 +52,14 @@ func NewStore(nodeID string) *Store {
 	return &Store{
 		data: data,
 		wal:  wal,
-	}
+	}, nil
 }
 
 func (s *Store) Set(key, value string) error {
+	if s.wal == nil {
+		return errors.New("WAL is not initialized")
+	}
+
 	s.mu.Lock()
 	defer s.mu.Unlock()
 

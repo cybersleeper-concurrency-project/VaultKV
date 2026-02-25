@@ -1,11 +1,18 @@
 package store
 
+// TODO: Currently I don't really handle the data corruption case. What I've implemented:
+// 	     [checksum(4)][type(1)][keyLen(2)][valLen(4)][key][value]
+// 	     For better reliability, we can add a partition to the wal bytes instead of
+// 	     just a single file. Then in each file we occupy the first 4B with a checksum
+// 	     for that entire file. This approach is already implemented in Cassandra
+
 import (
 	"bytes"
 	"encoding/binary"
 	"fmt"
 	"hash/crc32"
 	"io"
+	"math"
 	"os"
 	"sync"
 )
@@ -15,6 +22,11 @@ type RecordType uint8
 const (
 	RecordTypePut RecordType = iota
 	RecordTypeDelete
+)
+
+const (
+	maxWALKeyBytes   = math.MaxUint16
+	maxWALValueBytes = math.MaxUint32
 )
 
 type LogEntry struct {
@@ -36,12 +48,29 @@ func NewWAL(path string) (*WAL, error) {
 
 	wal := &WAL{
 		file: file,
-		mu:   sync.Mutex{},
 	}
 	return wal, nil
 }
 
+func (w *WAL) Close() error {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if w.file == nil {
+		return nil
+	}
+	err := w.file.Close()
+	w.file = nil
+	return err
+}
+
 func (w *WAL) Append(entry *LogEntry) error {
+	if entry == nil {
+		return fmt.Errorf("nil log entry")
+	}
+	if w.file == nil {
+		return fmt.Errorf("wal is closed")
+	}
+
 	w.mu.Lock()
 	defer w.mu.Unlock()
 
@@ -55,7 +84,16 @@ func (w *WAL) Append(entry *LogEntry) error {
 }
 
 func (w *WAL) ReadAll() ([]*LogEntry, error) {
-	w.file.Seek(0, io.SeekStart)
+	if w.file == nil {
+		return nil, fmt.Errorf("wal is closed")
+	}
+
+	w.mu.Lock()
+	defer w.mu.Unlock()
+
+	if _, err := w.file.Seek(0, io.SeekStart); err != nil {
+		return nil, err
+	}
 
 	var entries []*LogEntry
 
@@ -92,6 +130,10 @@ func BatchBinaryRead(r io.Reader, values ...any) error {
 }
 
 func (e *LogEntry) Encode(w io.Writer) error {
+	if uint64(len(e.Key)) > maxWALKeyBytes || uint64(len(e.Value)) > maxWALValueBytes {
+		return fmt.Errorf("wal entry too large: key=%d value=%d", len(e.Key), len(e.Value))
+	}
+
 	keyLen := uint16(len(e.Key))
 	valLen := uint32(len(e.Value))
 	var buf bytes.Buffer
@@ -140,10 +182,12 @@ func (e *LogEntry) Decode(r io.Reader) error {
 	}
 
 	var buf bytes.Buffer
-	BatchBinaryWrite(&buf, e.Type, keyLen, valLen, keyBytes, valBytes)
+	if err := BatchBinaryWrite(&buf, e.Type, keyLen, valLen, keyBytes, valBytes); err != nil {
+		return err
+	}
 
 	if crc32.ChecksumIEEE(buf.Bytes()) != checksum {
-		return fmt.Errorf("Corrupted log entry detected! Expected checksum: %d", checksum)
+		return fmt.Errorf("corrupted log entry: expected checksum %d", checksum)
 	}
 
 	e.Key = string(keyBytes)

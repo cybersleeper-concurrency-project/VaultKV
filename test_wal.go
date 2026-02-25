@@ -8,9 +8,12 @@ import (
 )
 
 func main() {
-	s := store.NewStore("vault.wal")
-	err := s.Set("direct", "write")
+	s, err := store.NewStore("vault.wal")
 	if err != nil {
+		log.Fatalf("Failed to open store: %v", err)
+	}
+
+	if err := s.Set("direct", "write"); err != nil {
 		log.Fatalf("Failed to write to store: %v", err)
 	}
 
