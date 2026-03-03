@@ -86,12 +86,12 @@ func (s *Skiplist) Set(k, v string) {
 	}
 }
 
-func (s *Skiplist) Get(k string) string {
+func (s *Skiplist) Get(k string) (string, bool) {
 	lastNodes := s.getUpdatePath(k)
 	candidate := lastNodes[0].Next[0]
 
 	if candidate != nil && candidate.Key == k {
-		return candidate.Value
+		return candidate.Value, true
 	}
-	return ""
+	return "", false
 }
