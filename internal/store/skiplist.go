@@ -6,16 +6,16 @@ import (
 )
 
 const (
-	// Probability for each level increment on the new node
-	Probability = 0.25
-	MaxLevel    = 16
+	// probability for each level increment on the new node
+	probability = 0.25
+	maxLevel    = 16
 )
 
 type Node struct {
-	Key   string
-	Value string
-	Next  []*Node
-	Level int
+	key   string
+	value string
+	next  []*Node
+	level int
 }
 
 type Skiplist struct {
@@ -23,54 +23,49 @@ type Skiplist struct {
 	mu        sync.RWMutex
 }
 
-func NewNode() (*Node, error) {
+func NewNode() *Node {
 	return &Node{
-		Next: make([]*Node, MaxLevel+1),
-	}, nil
+		next: make([]*Node, maxLevel+1),
+	}
 }
 
-func NewSkiplist() (*Skiplist, error) {
-	beginNode, _ := NewNode()
-	for i := range MaxLevel + 1 {
-		beginNode.Next[i] = nil
-	}
+func NewSkiplist() *Skiplist {
+	beginNode := NewNode()
 
 	return &Skiplist{
 		BeginNode: beginNode,
-	}, nil
+	}
 }
 
 func randomLevel() int {
 	lvl := 0
-	for rand.Float32() < Probability && lvl < MaxLevel {
+	for rand.Float32() < probability && lvl < maxLevel {
 		lvl++
 	}
 	return lvl
 }
 
-func (s *Skiplist) insert(befNode [MaxLevel + 1]*Node, k, v string) error {
-	curNode, _ := NewNode()
-	curNode.Key = k
-	curNode.Value = v
-	curNode.Level = randomLevel()
+func (s *Skiplist) insert(befNode [maxLevel + 1]*Node, k, v string) {
+	curNode := NewNode()
+	curNode.key = k
+	curNode.value = v
+	curNode.level = randomLevel()
 
-	for i := range curNode.Level + 1 {
-		curNode.Next[i] = befNode[i].Next[i]
-		befNode[i].Next[i] = curNode
+	for i := range curNode.level + 1 {
+		curNode.next[i] = befNode[i].next[i]
+		befNode[i].next[i] = curNode
 	}
-
-	return nil
 }
 
-func (s *Skiplist) getUpdatePath(k string) [MaxLevel + 1]*Node {
+func (s *Skiplist) getUpdatePath(k string) [maxLevel + 1]*Node {
 	// Store the last visited node for each level which key is
 	// STRICTLY less than k
-	var lastNodes [MaxLevel + 1]*Node
+	var lastNodes [maxLevel + 1]*Node
 	curNode := s.BeginNode
 
-	for i := MaxLevel; i >= 0; i-- {
-		for curNode.Next[i] != nil && curNode.Next[i].Key < k {
-			curNode = curNode.Next[i]
+	for i := maxLevel; i >= 0; i-- {
+		for curNode.next[i] != nil && curNode.next[i].key < k {
+			curNode = curNode.next[i]
 		}
 		lastNodes[i] = curNode
 	}
@@ -82,10 +77,10 @@ func (s *Skiplist) Set(k, v string) {
 	defer s.mu.Unlock()
 
 	lastNodes := s.getUpdatePath(k)
-	candidate := lastNodes[0].Next[0]
+	candidate := lastNodes[0].next[0]
 
-	if candidate != nil && candidate.Key == k {
-		candidate.Value = v
+	if candidate != nil && candidate.key == k {
+		candidate.value = v
 	} else {
 		s.insert(lastNodes, k, v)
 	}
@@ -96,10 +91,10 @@ func (s *Skiplist) Get(k string) (string, bool) {
 	defer s.mu.RUnlock()
 
 	lastNodes := s.getUpdatePath(k)
-	candidate := lastNodes[0].Next[0]
+	candidate := lastNodes[0].next[0]
 
-	if candidate != nil && candidate.Key == k {
-		return candidate.Value, true
+	if candidate != nil && candidate.key == k {
+		return candidate.value, true
 	}
 	return "", false
 }
