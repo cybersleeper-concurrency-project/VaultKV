@@ -2,6 +2,7 @@ package store
 
 import (
 	"math/rand/v2"
+	"sync"
 )
 
 const (
@@ -19,6 +20,7 @@ type Node struct {
 
 type Skiplist struct {
 	BeginNode *Node
+	mu        sync.RWMutex
 }
 
 func NewNode() (*Node, error) {
@@ -76,6 +78,9 @@ func (s *Skiplist) getUpdatePath(k string) [MaxLevel + 1]*Node {
 }
 
 func (s *Skiplist) Set(k, v string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
 	lastNodes := s.getUpdatePath(k)
 	candidate := lastNodes[0].Next[0]
 
@@ -87,6 +92,9 @@ func (s *Skiplist) Set(k, v string) {
 }
 
 func (s *Skiplist) Get(k string) (string, bool) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
 	lastNodes := s.getUpdatePath(k)
 	candidate := lastNodes[0].Next[0]
 
