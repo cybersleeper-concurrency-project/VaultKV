@@ -81,8 +81,9 @@ func (s *Skiplist) Set(k, v string) {
 
 	if candidate != nil && candidate.Key == k {
 		candidate.Value = v
+	} else {
+		s.insert(lastNodes, k, v)
 	}
-	s.insert(lastNodes, k, v)
 }
 
 func (s *Skiplist) Get(k string) string {
