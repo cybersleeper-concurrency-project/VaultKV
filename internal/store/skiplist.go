@@ -47,23 +47,16 @@ func randomLevel() int {
 }
 
 func (s *Skiplist) insert(befNode [MaxLevel + 1]*Node, k, v string) error {
-	nxtNode := befNode[0].Next[0]
 	curNode, _ := NewNode()
 	curNode.Key = k
 	curNode.Value = v
 	curNode.Level = randomLevel()
 
 	for i := range curNode.Level + 1 {
+		curNode.Next[i] = befNode[i].Next[i]
 		befNode[i].Next[i] = curNode
 	}
-	curLvl := 0
-	for curLvl <= curNode.Level {
-		for curLvl > nxtNode.Level {
-			nxtNode = nxtNode.Next[curLvl-1]
-		}
-		curNode.Next[curLvl] = nxtNode
-		curLvl++
-	}
+
 	return nil
 }
 
