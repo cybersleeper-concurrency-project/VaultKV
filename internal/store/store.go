@@ -15,7 +15,7 @@ type Engine interface {
 }
 
 type Store struct {
-	data map[string]string
+	data *Skiplist
 	mu   sync.RWMutex
 	wal  *WAL
 }
@@ -25,7 +25,7 @@ func NewStore(nodeID string) (*Store, error) {
 		return nil, fmt.Errorf("invalid nodeID: %q", nodeID)
 	}
 
-	data := make(map[string]string)
+	data := NewSkiplist()
 
 	filename := "vault_" + nodeID + ".wal"
 
@@ -42,10 +42,10 @@ func NewStore(nodeID string) (*Store, error) {
 
 	for _, v := range entries {
 		if v.Type == RecordTypePut {
-			data[v.Key] = v.Value
+			data.Set(v.Key, v.Value)
 		}
 		if v.Type == RecordTypeDelete {
-			delete(data, v.Key)
+			data.Delete(v.Key)
 		}
 	}
 
@@ -72,13 +72,13 @@ func (s *Store) Set(key, value string) error {
 		return err
 	}
 
-	s.data[key] = value
+	s.data.Set(key, value)
 	return nil
 }
 
 func (s *Store) Get(key string) (string, bool) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	val, exists := s.data[key]
+	val, exists := s.data.Get(key)
 	return val, exists
 }
