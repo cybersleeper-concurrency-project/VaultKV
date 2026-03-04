@@ -2,6 +2,7 @@ package store
 
 import (
 	"fmt"
+	"strconv"
 	"sync"
 	"testing"
 )
@@ -104,4 +105,31 @@ func TestSkiplist_Concurrency(t *testing.T) {
 		}(i)
 	}
 	wg.Wait()
+}
+
+func BenchmarkSkiplist_Set(b *testing.B) {
+	sl := NewSkiplist()
+
+	for i := 0; b.Loop(); i++ {
+		sl.Set(strconv.Itoa(i), "value")
+	}
+}
+
+func BenchmarkSkiplist_Get(b *testing.B) {
+	sl := NewSkiplist()
+
+	// Pre-generate the exact 10,000 keys we will use, this will prevent noises
+	// like garbage collection and strconv for our benchmark
+	const numItems = 10000
+	keys := make([]string, numItems)
+
+	for i := range numItems {
+		keys[i] = strconv.Itoa(i)
+		sl.Set(keys[i], "value")
+	}
+
+	// Loop resets the benchmark timer the first time it is called in a benchmark
+	for i := 0; b.Loop(); i++ {
+		sl.Get(keys[i%10000])
+	}
 }
