@@ -82,3 +82,23 @@ func (s *Store) Get(key string) (string, bool) {
 	val, exists := s.data.Get(key)
 	return val, exists
 }
+
+func (s *Store) Delete(key string) error {
+	if s.wal == nil {
+		return errors.New("WAL is not initialized")
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	err := s.wal.Append(&LogEntry{
+		Type: RecordTypeDelete,
+		Key:  key,
+	})
+	if err != nil {
+		return err
+	}
+
+	s.data.Delete(key)
+	return nil
+}
