@@ -44,7 +44,7 @@ func TestSkiplist_Ordering(t *testing.T) {
 	expectedKeys := []string{"a", "b", "c", "d"}
 	expectedVals := []string{"1", "2", "3", "4"}
 
-	current := sl.BeginNode.next[0]
+	current := sl.beginNode.next[0]
 	count := 0
 
 	for current != nil {

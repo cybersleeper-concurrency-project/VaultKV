@@ -19,7 +19,7 @@ type Node struct {
 }
 
 type Skiplist struct {
-	BeginNode *Node
+	beginNode *Node
 	mu        sync.RWMutex
 }
 
@@ -33,7 +33,7 @@ func NewSkiplist() *Skiplist {
 	beginNode := NewNode()
 
 	return &Skiplist{
-		BeginNode: beginNode,
+		beginNode: beginNode,
 	}
 }
 
@@ -61,7 +61,7 @@ func (s *Skiplist) getUpdatePath(k string) [maxLevel + 1]*Node {
 	// Store the last visited node for each level which key is
 	// STRICTLY less than k
 	var lastNodes [maxLevel + 1]*Node
-	curNode := s.BeginNode
+	curNode := s.beginNode
 
 	for i := maxLevel; i >= 0; i-- {
 		for curNode.next[i] != nil && curNode.next[i].key < k {
