@@ -142,6 +142,33 @@ func TestSkiplist_Concurrency_Overlapping(t *testing.T) {
 	wg.Wait()
 }
 
+func TestSkiplist_Delete(t *testing.T) {
+	sl := NewSkiplist()
+
+	// Set a key
+	sl.Set("key_to_delete", "val1")
+	val, ok := sl.Get("key_to_delete")
+	if !ok || val != "val1" {
+		t.Fatalf("Expected key_to_delete to exist with val1")
+	}
+
+	// Delete the key
+	sl.Delete("key_to_delete")
+
+	// Verify Get returns false
+	val, ok = sl.Get("key_to_delete")
+	if ok || val != "" {
+		t.Errorf("Expected Get to return false and empty string after delete, got %s (ok: %v)", val, ok)
+	}
+
+	// Verify we can resurrect the key
+	sl.Set("key_to_delete", "val2")
+	val, ok = sl.Get("key_to_delete")
+	if !ok || val != "val2" {
+		t.Errorf("Expected resurrected key to return val2, got %s (ok: %v)", val, ok)
+	}
+}
+
 func BenchmarkSkiplist_Set(b *testing.B) {
 	sl := NewSkiplist()
 
