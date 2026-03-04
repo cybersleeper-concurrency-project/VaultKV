@@ -107,6 +107,41 @@ func TestSkiplist_Concurrency(t *testing.T) {
 	wg.Wait()
 }
 
+func TestSkiplist_Concurrency_Overlapping(t *testing.T) {
+	sl := NewSkiplist()
+	var wg sync.WaitGroup
+	numGoroutines := 100
+	numOperations := 100
+
+	// Adding both Writers and Readers to the wait group at once
+	wg.Add(numGoroutines * 2)
+
+	for i := range numGoroutines {
+		go func(gID int) {
+			defer wg.Done()
+			for j := range numOperations {
+				key := fmt.Sprintf("key-%d-%d", gID, j)
+				sl.Set(key, "value")
+			}
+		}(i)
+
+		go func(gID int) {
+			defer wg.Done()
+			for j := range numOperations {
+				key := fmt.Sprintf("key-%d-%d", gID, j)
+
+				// We don't assert the exact value here because the writer
+				// might not have inserted it yet.
+				// We are strictly testing that reading DURING a write
+				// doesn't cause a panic or a fatal memory race!
+				sl.Get(key)
+			}
+		}(i)
+	}
+
+	wg.Wait()
+}
+
 func BenchmarkSkiplist_Set(b *testing.B) {
 	sl := NewSkiplist()
 
