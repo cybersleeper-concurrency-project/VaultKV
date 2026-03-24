@@ -1,7 +1,9 @@
 package store
 
-// TODO: Currently I don't really handle the data corruption case. What I've implemented:
+// NOTE: Currently I don't really handle the data corruption case. What I've implemented:
 // 	     [checksum(4)][type(1)][keyLen(2)][valLen(4)][key][value]
+//		 Each log-block will be appended to the same single file
+//
 // 	     For better reliability, we can add a partition to the wal bytes instead of
 // 	     just a single file. Then in each file we occupy the first 4B with a checksum
 // 	     for that entire file. This approach is already implemented in Cassandra
@@ -20,17 +22,11 @@ import (
 type RecordType uint8
 
 const (
-	RecordTypePut RecordType = iota
-	RecordTypeDelete
-)
-
-const (
 	maxWALKeyBytes   = math.MaxUint16
 	maxWALValueBytes = math.MaxUint32
 )
 
 type LogEntry struct {
-	Type  RecordType
 	Key   string
 	Value string
 }
@@ -138,7 +134,7 @@ func (e *LogEntry) Encode(w io.Writer) error {
 	valLen := uint32(len(e.Value))
 	var buf bytes.Buffer
 
-	if err := BatchBinaryWrite(&buf, e.Type, keyLen, valLen); err != nil {
+	if err := BatchBinaryWrite(&buf, keyLen, valLen); err != nil {
 		return err
 	}
 
@@ -167,7 +163,7 @@ func (e *LogEntry) Decode(r io.Reader) error {
 	var keyLen uint16
 	var valLen uint32
 
-	if err := BatchBinaryRead(r, &checksum, &e.Type, &keyLen, &valLen); err != nil {
+	if err := BatchBinaryRead(r, &checksum, &keyLen, &valLen); err != nil {
 		return err
 	}
 
@@ -182,7 +178,7 @@ func (e *LogEntry) Decode(r io.Reader) error {
 	}
 
 	var buf bytes.Buffer
-	if err := BatchBinaryWrite(&buf, e.Type, keyLen, valLen, keyBytes, valBytes); err != nil {
+	if err := BatchBinaryWrite(&buf, keyLen, valLen, keyBytes, valBytes); err != nil {
 		return err
 	}
 
