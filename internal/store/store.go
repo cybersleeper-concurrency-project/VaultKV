@@ -25,11 +25,17 @@ func NewStore(nodeID string) (*Store, error) {
 		return nil, fmt.Errorf("invalid nodeID: %q", nodeID)
 	}
 
+	walFilename := "vault_" + nodeID + ".wal"
+	sstFilename := nodeID + ".sst"
+
 	data := NewSkiplist()
 
-	filename := "vault_" + nodeID + ".wal"
+	sst, err := NewSSTable(sstFilename)
+	if err != nil {
+		return nil, fmt.Errorf("initializing SSTable: %w", err)
+	}
 
-	wal, err := NewWAL(filename)
+	wal, err := NewWAL(walFilename)
 	if err != nil {
 		return nil, fmt.Errorf("initializing WAL: %w", err)
 	}
@@ -41,11 +47,16 @@ func NewStore(nodeID string) (*Store, error) {
 	}
 
 	for _, v := range entries {
-		if v.Type == RecordTypePut {
-			data.Set(v.Key, v.Value)
-		}
-		if v.Type == RecordTypeDelete {
+		if v.Value == tombstone {
 			data.Delete(v.Key)
+		} else {
+			data.Set(v.Key, v.Value)
+
+			data.mu.Lock()
+			if data.Size >= skiplistCapacity {
+				sst.Flush(data)
+			}
+			data.mu.Unlock()
 		}
 	}
 
@@ -64,7 +75,6 @@ func (s *Store) Set(key, value string) error {
 	defer s.mu.Unlock()
 
 	err := s.wal.Append(&LogEntry{
-		Type:  RecordTypePut,
 		Key:   key,
 		Value: value,
 	})
@@ -92,8 +102,7 @@ func (s *Store) Delete(key string) error {
 	defer s.mu.Unlock()
 
 	err := s.wal.Append(&LogEntry{
-		Type: RecordTypeDelete,
-		Key:  key,
+		Key: key,
 	})
 	if err != nil {
 		return err

@@ -44,22 +44,22 @@ func TestSkiplist_Ordering(t *testing.T) {
 	expectedKeys := []string{"a", "b", "c", "d"}
 	expectedVals := []string{"1", "2", "3", "4"}
 
-	current := sl.beginNode.next[0]
+	current := sl.BeginNode.Next[0]
 	count := 0
 
 	for current != nil {
 		if count >= len(expectedKeys) {
-			t.Fatalf("Found more nodes than expected. Extra key: %s", current.key)
+			t.Fatalf("Found more nodes than expected. Extra key: %s", current.Key)
 		}
 
-		if current.key != expectedKeys[count] {
-			t.Errorf("Expected key %s at position %d, got %s", expectedKeys[count], count, current.key)
+		if current.Key != expectedKeys[count] {
+			t.Errorf("Expected key %s at position %d, got %s", expectedKeys[count], count, current.Key)
 		}
-		if current.value != expectedVals[count] {
-			t.Errorf("Expected value %s at position %d, got %s", expectedVals[count], count, current.value)
+		if current.Value != expectedVals[count] {
+			t.Errorf("Expected value %s at position %d, got %s", expectedVals[count], count, current.Value)
 		}
 
-		current = current.next[0]
+		current = current.Next[0]
 		count++
 	}
 

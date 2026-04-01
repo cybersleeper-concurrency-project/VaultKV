@@ -1,7 +1,7 @@
 package store
 
 // NOTE: Currently I don't really handle the data corruption case. What I've implemented:
-// 	     [checksum(4)][type(1)][keyLen(2)][valLen(4)][key][value]
+// 	     [checksum(4)][keyLen(2)][valLen(4)][key][value]
 //		 Each log-block will be appended to the same single file
 //
 // 	     For better reliability, we can add a partition to the wal bytes instead of
@@ -34,6 +34,13 @@ type LogEntry struct {
 type WAL struct {
 	file *os.File
 	mu   sync.Mutex
+}
+
+func NewLogEntry(k, v string) *LogEntry {
+	return &LogEntry{
+		Key:   k,
+		Value: v,
+	}
 }
 
 func NewWAL(path string) (*WAL, error) {
