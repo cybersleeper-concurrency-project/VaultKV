@@ -18,6 +18,7 @@ type Store struct {
 	data *Skiplist
 	mu   sync.RWMutex
 	wal  *WAL
+	sst  *SSTable
 }
 
 func NewStore(nodeID string) (*Store, error) {
@@ -52,17 +53,21 @@ func NewStore(nodeID string) (*Store, error) {
 		} else {
 			data.Set(v.Key, v.Value)
 
-			data.mu.Lock()
 			if data.Size >= skiplistCapacity {
-				sst.Flush(data)
+				err := sst.Flush(data)
+				if err != nil {
+					return nil, err
+				}
+
+				data = NewSkiplist()
 			}
-			data.mu.Unlock()
 		}
 	}
 
 	return &Store{
 		data: data,
 		wal:  wal,
+		sst:  sst,
 	}, nil
 }
 
@@ -83,6 +88,16 @@ func (s *Store) Set(key, value string) error {
 	}
 
 	s.data.Set(key, value)
+
+	if s.data.Size >= skiplistCapacity {
+		err := s.sst.Flush(s.data)
+		if err != nil {
+			return err
+		}
+
+		s.data = NewSkiplist()
+	}
+
 	return nil
 }
 

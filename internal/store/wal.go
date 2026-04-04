@@ -16,7 +16,6 @@ import (
 	"io"
 	"math"
 	"os"
-	"sync"
 )
 
 type RecordType uint8
@@ -33,7 +32,6 @@ type LogEntry struct {
 
 type WAL struct {
 	file *os.File
-	mu   sync.Mutex
 }
 
 func NewLogEntry(k, v string) *LogEntry {
@@ -56,8 +54,6 @@ func NewWAL(path string) (*WAL, error) {
 }
 
 func (w *WAL) Close() error {
-	w.mu.Lock()
-	defer w.mu.Unlock()
 	if w.file == nil {
 		return nil
 	}
@@ -74,9 +70,6 @@ func (w *WAL) Append(entry *LogEntry) error {
 		return fmt.Errorf("wal is closed")
 	}
 
-	w.mu.Lock()
-	defer w.mu.Unlock()
-
 	if err := entry.Encode(w.file); err != nil {
 		return err
 	}
@@ -90,9 +83,6 @@ func (w *WAL) ReadAll() ([]*LogEntry, error) {
 	if w.file == nil {
 		return nil, fmt.Errorf("wal is closed")
 	}
-
-	w.mu.Lock()
-	defer w.mu.Unlock()
 
 	if _, err := w.file.Seek(0, io.SeekStart); err != nil {
 		return nil, err

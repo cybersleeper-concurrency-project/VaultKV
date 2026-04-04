@@ -8,7 +8,6 @@ import (
 	"io"
 	"math"
 	"os"
-	"sync"
 )
 
 const sstableLevelCount = 10
@@ -19,7 +18,6 @@ const maxEntryCntBytes = math.MaxUint16
 type SSTable struct {
 	file    *os.File
 	Entries []*SSTableLevel
-	mu      sync.Mutex
 }
 
 type SSTableEntry struct {
@@ -66,8 +64,6 @@ func (s *SSTable) MergeSkiplist(skiplist *Skiplist) (*SSTableEntry, error) {
 		}
 	}
 
-	skiplist = NewSkiplist()
-
 	return sstableEntry, nil
 }
 
@@ -78,9 +74,6 @@ func (s *SSTable) Append(entry *SSTableEntry) error {
 	if s.file == nil {
 		return fmt.Errorf("sst is nil")
 	}
-
-	s.mu.Lock()
-	defer s.mu.Unlock()
 
 	if err := entry.Encode(s.file); err != nil {
 		return err
@@ -127,8 +120,11 @@ func (e *SSTableEntry) Encode(w io.Writer) error {
 	}
 
 	for _, v := range e.LogEntries {
-		keyLen := len(v.Key)
-		valLen := len(v.Value)
+		var keyLen uint16
+		var valLen uint32
+
+		keyLen = uint16(len(v.Key))
+		valLen = uint32(len(v.Value))
 		if err := binary.Write(&buf, binary.LittleEndian, keyLen); err != nil {
 			return err
 		}
@@ -141,16 +137,16 @@ func (e *SSTableEntry) Encode(w io.Writer) error {
 		if _, err := buf.Write([]byte(v.Value)); err != nil {
 			return err
 		}
+	}
 
-		data := buf.Bytes()
-		checksum := crc32.ChecksumIEEE(data)
+	data := buf.Bytes()
+	checksum := crc32.ChecksumIEEE(data)
 
-		if err := binary.Write(w, binary.LittleEndian, checksum); err != nil {
-			return err
-		}
-		if _, err := w.Write(data); err != nil {
-			return err
-		}
+	if err := binary.Write(w, binary.LittleEndian, checksum); err != nil {
+		return err
+	}
+	if _, err := w.Write(data); err != nil {
+		return err
 	}
 
 	return nil
@@ -209,14 +205,14 @@ func (e *SSTableEntry) Decode(r io.Reader) error {
 			return err
 		}
 
-		if crc32.ChecksumIEEE(buf.Bytes()) != checksum {
-			return fmt.Errorf("corrupted SST entry: expected checksum %d", checksum)
-		}
-
 		logEntries[i] = &LogEntry{
 			Key:   string(keyBytes),
 			Value: string(valBytes),
 		}
+	}
+
+	if crc32.ChecksumIEEE(buf.Bytes()) != checksum {
+		return fmt.Errorf("corrupted SST entry: expected checksum %d", checksum)
 	}
 
 	e.LogEntries = logEntries
