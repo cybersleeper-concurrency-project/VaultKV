@@ -6,10 +6,9 @@ import (
 
 const (
 	// probability for each level increment on the new node
-	probability      = 0.25
-	maxLevel         = 16
-	tombstone        = "0:^_#TOMBSTONE#_^:0"
-	skiplistCapacity = 100
+	probability = 0.25
+	maxLevel    = 16
+	tombstone   = "0:^_#TOMBSTONE#_^:0"
 )
 
 type Node struct {
@@ -21,7 +20,6 @@ type Node struct {
 
 type Skiplist struct {
 	BeginNode *Node
-	Size      int
 }
 
 func NewNode() *Node {
@@ -34,7 +32,6 @@ func NewSkiplist() *Skiplist {
 	beginNode := NewNode()
 
 	return &Skiplist{
-		Size:      0,
 		BeginNode: beginNode,
 	}
 }
@@ -57,8 +54,6 @@ func (s *Skiplist) insert(befNode [maxLevel + 1]*Node, k, v string) {
 		curNode.Next[i] = befNode[i].Next[i]
 		befNode[i].Next[i] = curNode
 	}
-
-	s.Size++
 }
 
 func (s *Skiplist) getUpdatePath(k string) [maxLevel + 1]*Node {

@@ -7,6 +7,8 @@ import (
 	"sync"
 )
 
+const mutationLimit = 100
+
 var validNodeID = regexp.MustCompile(`^[a-zA-Z0-9_-]+$`)
 
 type Engine interface {
@@ -15,10 +17,11 @@ type Engine interface {
 }
 
 type Store struct {
-	data *Skiplist
-	mu   sync.RWMutex
-	wal  *WAL
-	sst  *SSTable
+	mutationCount int
+	data          *Skiplist
+	mu            sync.RWMutex
+	wal           *WAL
+	sst           *SSTable
 }
 
 func NewStore(nodeID string) (*Store, error) {
@@ -56,9 +59,10 @@ func NewStore(nodeID string) (*Store, error) {
 	}
 
 	return &Store{
-		data: data,
-		wal:  wal,
-		sst:  sst,
+		mutationCount: len(entries),
+		data:          data,
+		wal:           wal,
+		sst:           sst,
 	}, nil
 }
 
@@ -79,13 +83,15 @@ func (s *Store) Set(key, value string) error {
 	}
 
 	s.data.Set(key, value)
+	s.mutationCount++
 
-	if s.data.Size >= skiplistCapacity {
+	if s.mutationCount >= mutationLimit {
 		err := s.sst.Flush(s.data)
 		if err != nil {
 			return err
 		}
 
+		s.mutationCount = 0
 		s.data = NewSkiplist()
 		s.wal.Clear()
 	}
@@ -117,5 +123,18 @@ func (s *Store) Delete(key string) error {
 	}
 
 	s.data.Delete(key)
+	s.mutationCount++
+
+	if s.mutationCount >= mutationLimit {
+		err := s.sst.Flush(s.data)
+		if err != nil {
+			return err
+		}
+
+		s.mutationCount = 0
+		s.data = NewSkiplist()
+		s.wal.Clear()
+	}
+
 	return nil
 }
