@@ -109,7 +109,8 @@ func (s *Store) Delete(key string) error {
 	defer s.mu.Unlock()
 
 	err := s.wal.Append(&LogEntry{
-		Key: key,
+		Key:   key,
+		Value: tombstone,
 	})
 	if err != nil {
 		return err
