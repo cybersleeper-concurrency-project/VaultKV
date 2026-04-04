@@ -52,15 +52,6 @@ func NewStore(nodeID string) (*Store, error) {
 			data.Delete(v.Key)
 		} else {
 			data.Set(v.Key, v.Value)
-
-			if data.Size >= skiplistCapacity {
-				err := sst.Flush(data)
-				if err != nil {
-					return nil, err
-				}
-
-				data = NewSkiplist()
-			}
 		}
 	}
 
@@ -96,6 +87,7 @@ func (s *Store) Set(key, value string) error {
 		}
 
 		s.data = NewSkiplist()
+		s.wal.Clear()
 	}
 
 	return nil
