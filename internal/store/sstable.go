@@ -137,7 +137,7 @@ func (e *SSTableEntry) Encode(w io.Writer) error {
 		valLen = uint32(len(v.Value))
 
 		indexSlice[i] = indexEntry{
-			pointer: uint32(buf.Len()) + 4,
+			pointer: uint32(buf.Len()),
 			keyLen:  keyLen,
 			key:     v.Key,
 		}
@@ -156,9 +156,8 @@ func (e *SSTableEntry) Encode(w io.Writer) error {
 		}
 	}
 
-	// The Trailer Index Block starts from buf.Len() + 4
-	// because the checksum is not included in the buf
-	indexOffset := uint32(buf.Len()) + 4
+	// The Trailer Index Block starts from buf.Len()
+	indexOffset := uint32(buf.Len())
 
 	// Index Block
 	for _, v := range indexSlice {
@@ -173,21 +172,28 @@ func (e *SSTableEntry) Encode(w io.Writer) error {
 		}
 	}
 
-	data := buf.Bytes()
-	checksum := crc32.ChecksumIEEE(data)
-
-	if err := binary.Write(w, binary.LittleEndian, checksum); err != nil {
+	// Write Footer directly into buf!
+	if err := binary.Write(&buf, binary.LittleEndian, indexOffset); err != nil {
 		return err
 	}
+	if err := binary.Write(&buf, binary.LittleEndian, magicNumber); err != nil {
+		return err
+	}
+
+	data := buf.Bytes()
+	
+	// TODO(Future Improvement):
+	// Currently, this writes a single Master Checksum over the entire SSTable file at the EOF
+	// For production-grade durability against single-bit flips, consider rotating to 
+	// Block-Based Checksums (calculating and inserting a checksum every 4KB of data chunked) 
+	// to prevent a 1-byte corruption from invalidating the entire file
+	checksum := crc32.ChecksumIEEE(data)
+
+	// Write everything to disk, and Checksum at the absolute end
 	if _, err := w.Write(data); err != nil {
 		return err
 	}
-
-	// Footer
-	if err := binary.Write(w, binary.LittleEndian, indexOffset); err != nil {
-		return err
-	}
-	if err := binary.Write(w, binary.LittleEndian, magicNumber); err != nil {
+	if err := binary.Write(w, binary.LittleEndian, checksum); err != nil {
 		return err
 	}
 
