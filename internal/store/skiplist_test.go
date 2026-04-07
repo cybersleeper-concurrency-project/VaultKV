@@ -7,6 +7,7 @@ import (
 	"testing"
 )
 
+// BEGIN AI SECTION
 func TestSkiplist_BasicGetSet(t *testing.T) {
 	sl := NewSkiplist()
 
@@ -195,3 +196,5 @@ func BenchmarkSkiplist_Get(b *testing.B) {
 		sl.Get(keys[i%10000])
 	}
 }
+
+// END AI SECTION

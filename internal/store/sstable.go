@@ -15,6 +15,8 @@ const sstableEntryLimit = 10
 
 const maxEntryCntBytes = math.MaxUint16
 
+const magicNumber uint32 = 0xCAFEBABE
+
 type SSTable struct {
 	file    *os.File
 	Entries []*SSTableLevel
@@ -26,6 +28,12 @@ type SSTableEntry struct {
 
 type SSTableLevel struct {
 	file *os.File
+}
+
+type indexEntry struct {
+	pointer uint32
+	keyLen  uint16
+	key     string
 }
 
 func NewSSTable(path string) (*SSTable, error) {
@@ -119,12 +127,21 @@ func (e *SSTableEntry) Encode(w io.Writer) error {
 		return err
 	}
 
-	for _, v := range e.LogEntries {
+	indexSlice := make([]indexEntry, dataLen)
+
+	for i, v := range e.LogEntries {
 		var keyLen uint16
 		var valLen uint32
 
 		keyLen = uint16(len(v.Key))
 		valLen = uint32(len(v.Value))
+
+		indexSlice[i] = indexEntry{
+			pointer: uint32(buf.Len()) + 4,
+			keyLen:  keyLen,
+			key:     v.Key,
+		}
+
 		if err := binary.Write(&buf, binary.LittleEndian, keyLen); err != nil {
 			return err
 		}
@@ -139,6 +156,23 @@ func (e *SSTableEntry) Encode(w io.Writer) error {
 		}
 	}
 
+	// The Trailer Index Block starts from buf.Len() + 4
+	// because the checksum is not included in the buf
+	indexOffset := uint32(buf.Len()) + 4
+
+	// Index Block
+	for _, v := range indexSlice {
+		if err := binary.Write(&buf, binary.LittleEndian, v.pointer); err != nil {
+			return err
+		}
+		if err := binary.Write(&buf, binary.LittleEndian, v.keyLen); err != nil {
+			return err
+		}
+		if _, err := buf.Write([]byte(v.key)); err != nil {
+			return err
+		}
+	}
+
 	data := buf.Bytes()
 	checksum := crc32.ChecksumIEEE(data)
 
@@ -146,6 +180,14 @@ func (e *SSTableEntry) Encode(w io.Writer) error {
 		return err
 	}
 	if _, err := w.Write(data); err != nil {
+		return err
+	}
+
+	// Footer
+	if err := binary.Write(w, binary.LittleEndian, indexOffset); err != nil {
+		return err
+	}
+	if err := binary.Write(w, binary.LittleEndian, magicNumber); err != nil {
 		return err
 	}
 

@@ -7,11 +7,13 @@ import (
 	"testing"
 )
 
+// BEGIN AI SECTION
+
 // setupStore creates a completely isolated new Store instance using a temporary file path
 func setupStore(t *testing.T, prefix string) (*Store, func()) {
 	// Create a unique nodeID for the temporary file
 	// Use t.TempDir() to guarantee cleanup of files when the test is done
-	
+
 	// // Create a unique nodeID for the temporary file
 	nodeID := prefix + "_testnode"
 
@@ -123,3 +125,5 @@ func TestStore_ConcurrentSetGet(t *testing.T) {
 
 	wg.Wait()
 }
+
+// END AI SECTION
