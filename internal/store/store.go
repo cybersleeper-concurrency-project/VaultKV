@@ -7,6 +7,8 @@ import (
 	"sync"
 )
 
+const mutationLimit = 100
+
 var validNodeID = regexp.MustCompile(`^[a-zA-Z0-9_-]+$`)
 
 type Engine interface {
@@ -15,9 +17,11 @@ type Engine interface {
 }
 
 type Store struct {
-	data *Skiplist
-	mu   sync.RWMutex
-	wal  *WAL
+	mutationCount int
+	data          *Skiplist
+	mu            sync.RWMutex
+	wal           *WAL
+	sst           *SSTable
 }
 
 func NewStore(nodeID string) (*Store, error) {
@@ -25,11 +29,17 @@ func NewStore(nodeID string) (*Store, error) {
 		return nil, fmt.Errorf("invalid nodeID: %q", nodeID)
 	}
 
+	walFilename := "vault_" + nodeID + ".wal"
+	sstFilename := nodeID + ".sst"
+
 	data := NewSkiplist()
 
-	filename := "vault_" + nodeID + ".wal"
+	sst, err := NewSSTable(sstFilename)
+	if err != nil {
+		return nil, fmt.Errorf("initializing SSTable: %w", err)
+	}
 
-	wal, err := NewWAL(filename)
+	wal, err := NewWAL(walFilename)
 	if err != nil {
 		return nil, fmt.Errorf("initializing WAL: %w", err)
 	}
@@ -41,17 +51,18 @@ func NewStore(nodeID string) (*Store, error) {
 	}
 
 	for _, v := range entries {
-		if v.Type == RecordTypePut {
-			data.Set(v.Key, v.Value)
-		}
-		if v.Type == RecordTypeDelete {
+		if v.Value == tombstone {
 			data.Delete(v.Key)
+		} else {
+			data.Set(v.Key, v.Value)
 		}
 	}
 
 	return &Store{
-		data: data,
-		wal:  wal,
+		mutationCount: len(entries),
+		data:          data,
+		wal:           wal,
+		sst:           sst,
 	}, nil
 }
 
@@ -64,7 +75,6 @@ func (s *Store) Set(key, value string) error {
 	defer s.mu.Unlock()
 
 	err := s.wal.Append(&LogEntry{
-		Type:  RecordTypePut,
 		Key:   key,
 		Value: value,
 	})
@@ -73,6 +83,19 @@ func (s *Store) Set(key, value string) error {
 	}
 
 	s.data.Set(key, value)
+	s.mutationCount++
+
+	if s.mutationCount >= mutationLimit {
+		err := s.sst.Flush(s.data)
+		if err != nil {
+			return err
+		}
+
+		s.mutationCount = 0
+		s.data = NewSkiplist()
+		s.wal.Clear()
+	}
+
 	return nil
 }
 
@@ -92,13 +115,26 @@ func (s *Store) Delete(key string) error {
 	defer s.mu.Unlock()
 
 	err := s.wal.Append(&LogEntry{
-		Type: RecordTypeDelete,
-		Key:  key,
+		Key:   key,
+		Value: tombstone,
 	})
 	if err != nil {
 		return err
 	}
 
 	s.data.Delete(key)
+	s.mutationCount++
+
+	if s.mutationCount >= mutationLimit {
+		err := s.sst.Flush(s.data)
+		if err != nil {
+			return err
+		}
+
+		s.mutationCount = 0
+		s.data = NewSkiplist()
+		s.wal.Clear()
+	}
+
 	return nil
 }

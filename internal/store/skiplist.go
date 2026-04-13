@@ -2,7 +2,6 @@ package store
 
 import (
 	"math/rand/v2"
-	"sync"
 )
 
 const (
@@ -13,20 +12,19 @@ const (
 )
 
 type Node struct {
-	key   string
-	value string
-	next  []*Node
+	Key   string
+	Value string
+	Next  []*Node
 	level int
 }
 
 type Skiplist struct {
-	beginNode *Node
-	mu        sync.RWMutex
+	BeginNode *Node
 }
 
 func NewNode() *Node {
 	return &Node{
-		next: make([]*Node, maxLevel+1),
+		Next: make([]*Node, maxLevel+1),
 	}
 }
 
@@ -34,7 +32,7 @@ func NewSkiplist() *Skiplist {
 	beginNode := NewNode()
 
 	return &Skiplist{
-		beginNode: beginNode,
+		BeginNode: beginNode,
 	}
 }
 
@@ -48,13 +46,13 @@ func randomLevel() int {
 
 func (s *Skiplist) insert(befNode [maxLevel + 1]*Node, k, v string) {
 	curNode := NewNode()
-	curNode.key = k
-	curNode.value = v
+	curNode.Key = k
+	curNode.Value = v
 	curNode.level = randomLevel()
 
 	for i := range curNode.level + 1 {
-		curNode.next[i] = befNode[i].next[i]
-		befNode[i].next[i] = curNode
+		curNode.Next[i] = befNode[i].Next[i]
+		befNode[i].Next[i] = curNode
 	}
 }
 
@@ -62,11 +60,11 @@ func (s *Skiplist) getUpdatePath(k string) [maxLevel + 1]*Node {
 	// Store the last visited node for each level which key is
 	// STRICTLY less than k
 	var lastNodes [maxLevel + 1]*Node
-	curNode := s.beginNode
+	curNode := s.BeginNode
 
 	for i := maxLevel; i >= 0; i-- {
-		for curNode.next[i] != nil && curNode.next[i].key < k {
-			curNode = curNode.next[i]
+		for curNode.Next[i] != nil && curNode.Next[i].Key < k {
+			curNode = curNode.Next[i]
 		}
 		lastNodes[i] = curNode
 	}
@@ -74,28 +72,22 @@ func (s *Skiplist) getUpdatePath(k string) [maxLevel + 1]*Node {
 }
 
 func (s *Skiplist) Set(k, v string) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
 	lastNodes := s.getUpdatePath(k)
-	candidate := lastNodes[0].next[0]
+	candidate := lastNodes[0].Next[0]
 
-	if candidate != nil && candidate.key == k {
-		candidate.value = v
+	if candidate != nil && candidate.Key == k {
+		candidate.Value = v
 	} else {
 		s.insert(lastNodes, k, v)
 	}
 }
 
 func (s *Skiplist) Get(k string) (string, bool) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-
 	lastNodes := s.getUpdatePath(k)
-	candidate := lastNodes[0].next[0]
+	candidate := lastNodes[0].Next[0]
 
-	if candidate != nil && candidate.key == k && candidate.value != tombstone {
-		return candidate.value, true
+	if candidate != nil && candidate.Key == k && candidate.Value != tombstone {
+		return candidate.Value, true
 	}
 	return "", false
 }
