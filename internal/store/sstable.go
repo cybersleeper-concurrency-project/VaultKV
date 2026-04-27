@@ -181,11 +181,11 @@ func (e *SSTableEntry) Encode(w io.Writer) error {
 	}
 
 	data := buf.Bytes()
-	
+
 	// TODO(Future Improvement):
 	// Currently, this writes a single Master Checksum over the entire SSTable file at the EOF
-	// For production-grade durability against single-bit flips, consider rotating to 
-	// Block-Based Checksums (calculating and inserting a checksum every 4KB of data chunked) 
+	// For production-grade durability against single-bit flips, consider rotating to
+	// Block-Based Checksums (calculating and inserting a checksum every 4KB of data chunked)
 	// to prevent a 1-byte corruption from invalidating the entire file
 	checksum := crc32.ChecksumIEEE(data)
 
@@ -201,14 +201,10 @@ func (e *SSTableEntry) Encode(w io.Writer) error {
 }
 
 func (e *SSTableEntry) Decode(r io.Reader) error {
-	var checksum uint32
 	var dataLen uint16
 
 	var buf bytes.Buffer
 
-	if err := binary.Read(r, binary.LittleEndian, &checksum); err != nil {
-		return err
-	}
 	if err := binary.Read(r, binary.LittleEndian, &dataLen); err != nil {
 		return err
 	}
@@ -240,6 +236,7 @@ func (e *SSTableEntry) Decode(r io.Reader) error {
 			return err
 		}
 
+		// Wrtie to buf for the checksum later
 		if err := binary.Write(&buf, binary.LittleEndian, keyLen); err != nil {
 			return err
 		}
@@ -257,6 +254,53 @@ func (e *SSTableEntry) Decode(r io.Reader) error {
 			Key:   string(keyBytes),
 			Value: string(valBytes),
 		}
+	}
+
+	for range dataLen {
+		var curIndex indexEntry
+
+		if err := binary.Read(r, binary.LittleEndian, &curIndex.pointer); err != nil {
+			return err
+		}
+		if err := binary.Read(r, binary.LittleEndian, &curIndex.keyLen); err != nil {
+			return err
+		}
+
+		keyBytes := make([]byte, curIndex.keyLen)
+		if _, err := io.ReadFull(r, keyBytes); err != nil {
+			return err
+		}
+
+		if err := binary.Write(&buf, binary.LittleEndian, curIndex.pointer); err != nil {
+			return err
+		}
+		if err := binary.Write(&buf, binary.LittleEndian, curIndex.keyLen); err != nil {
+			return err
+		}
+		if _, err := buf.Write(keyBytes); err != nil {
+			return err
+		}
+	}
+
+	var curIndexOffset uint32
+	var curMagicNumber uint32
+
+	if err := binary.Read(r, binary.LittleEndian, &curIndexOffset); err != nil {
+		return err
+	}
+	if err := binary.Read(r, binary.LittleEndian, &curMagicNumber); err != nil {
+		return err
+	}
+	if err := binary.Write(&buf, binary.LittleEndian, curIndexOffset); err != nil {
+		return err
+	}
+	if err := binary.Write(&buf, binary.LittleEndian, curMagicNumber); err != nil {
+		return err
+	}
+
+	var checksum uint32
+	if err := binary.Read(r, binary.LittleEndian, &checksum); err != nil {
+		return err
 	}
 
 	if crc32.ChecksumIEEE(buf.Bytes()) != checksum {
