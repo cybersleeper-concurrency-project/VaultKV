@@ -42,13 +42,24 @@ func NewStore(nodeID string) (*Store, error) {
 	}
 
 	pattern := fmt.Sprintf("vault_%s_*.wal", nodeID)
-	walFiles, _ := filepath.Glob(pattern)
+	walFiles, err := filepath.Glob(pattern)
+	if err != nil {
+		return nil, fmt.Errorf("failed to scan for old WALs: %w", err)
+	}
 
 	sort.Strings(walFiles)
 
 	for _, file := range walFiles {
-		oldWal, _ := NewWAL(file)
-		entries, _ := oldWal.ReadAll()
+		oldWal, err := NewWAL(file)
+		if err != nil {
+			return nil, fmt.Errorf("failed to open old WAL %s: %w", file, err)
+		}
+
+		entries, err := oldWal.ReadAll()
+		if err != nil {
+			oldWal.Close()
+			return nil, fmt.Errorf("corrupted WAL detected in %s: %w", file, err)
+		}
 
 		for _, v := range entries {
 			if v.Value == tombstone {
@@ -94,7 +105,9 @@ func (s *Store) Set(key, value string) error {
 	s.data.Set(key, value)
 
 	if s.data.IsFull() {
-		s.FlushMemTable()
+		if err := s.FlushMemTable(); err != nil {
+			return err
+		}
 	}
 
 	return nil
@@ -125,20 +138,26 @@ func (s *Store) Delete(key string) error {
 
 	s.data.Delete(key)
 	if s.data.IsFull() {
-		s.FlushMemTable()
+		if err := s.FlushMemTable(); err != nil {
+			return err
+		}
 	}
 
 	return nil
 }
 
-func (s *Store) FlushMemTable() {
+func (s *Store) FlushMemTable() error {
 	frozenData := s.data
 	frozenWal := s.wal
 
 	newWalName := fmt.Sprintf("vault_%s_%d.wal", s.nodeId, time.Now().UnixNano())
 
 	s.data = NewSkiplist()
-	s.wal, _ = NewWAL(newWalName)
+	var err error
+	s.wal, err = NewWAL(newWalName)
+	if err != nil {
+		return fmt.Errorf("failed to create new WAL: %w", err)
+	}
 
 	go func(dataToFlush *Skiplist, oldWal *WAL) {
 		err := s.sst.Flush(dataToFlush)
@@ -149,4 +168,6 @@ func (s *Store) FlushMemTable() {
 
 		oldWal.Clear()
 	}(frozenData, frozenWal)
+
+	return nil
 }
