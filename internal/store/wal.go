@@ -16,7 +16,6 @@ import (
 	"io"
 	"math"
 	"os"
-	"time"
 )
 
 type RecordType uint8
@@ -42,10 +41,8 @@ func NewLogEntry(k, v string) *LogEntry {
 	}
 }
 
-func NewWAL(nodeId string) (*WAL, error) {
-	newWalName := fmt.Sprintf("vault_%s_%d.wal", nodeId, time.Now().UnixNano())
-
-	file, err := os.OpenFile(newWalName, os.O_RDWR|os.O_APPEND|os.O_CREATE, 0644)
+func NewWAL(filepath string) (*WAL, error) {
+	file, err := os.OpenFile(filepath, os.O_RDWR|os.O_APPEND|os.O_CREATE, 0644)
 	if err != nil {
 		return nil, err
 	}

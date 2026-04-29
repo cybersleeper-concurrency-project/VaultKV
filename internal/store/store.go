@@ -3,8 +3,11 @@ package store
 import (
 	"errors"
 	"fmt"
+	"path/filepath"
 	"regexp"
+	"sort"
 	"sync"
+	"time"
 )
 
 const memTableSizeThreshold = 4 * 1024 * 1024 // 4MB
@@ -38,23 +41,30 @@ func NewStore(nodeID string) (*Store, error) {
 		return nil, fmt.Errorf("initializing SSTable: %w", err)
 	}
 
-	wal, err := NewWAL(nodeID)
+	pattern := fmt.Sprintf("vault_%s_*.wal", nodeID)
+	walFiles, _ := filepath.Glob(pattern)
+
+	sort.Strings(walFiles)
+
+	for _, file := range walFiles {
+		oldWal, _ := NewWAL(file)
+		entries, _ := oldWal.ReadAll()
+
+		for _, v := range entries {
+			if v.Value == tombstone {
+				data.Delete(v.Key)
+			} else {
+				data.Set(v.Key, v.Value)
+			}
+		}
+		oldWal.Close()
+	}
+
+	newWalName := fmt.Sprintf("vault_%s_%d.wal", nodeID, time.Now().UnixNano())
+
+	wal, err := NewWAL(newWalName)
 	if err != nil {
 		return nil, fmt.Errorf("initializing WAL: %w", err)
-	}
-
-	entries, err := wal.ReadAll()
-	if err != nil {
-		wal.Close()
-		return nil, fmt.Errorf("reading WAL entries: %w", err)
-	}
-
-	for _, v := range entries {
-		if v.Value == tombstone {
-			data.Delete(v.Key)
-		} else {
-			data.Set(v.Key, v.Value)
-		}
 	}
 
 	return &Store{
@@ -125,8 +135,10 @@ func (s *Store) FlushMemTable() {
 	frozenData := s.data
 	frozenWal := s.wal
 
+	newWalName := fmt.Sprintf("vault_%s_%d.wal", s.nodeId, time.Now().UnixNano())
+
 	s.data = NewSkiplist()
-	s.wal, _ = NewWAL(s.nodeId)
+	s.wal, _ = NewWAL(newWalName)
 
 	go func(dataToFlush *Skiplist, oldWal *WAL) {
 		err := s.sst.Flush(dataToFlush)
