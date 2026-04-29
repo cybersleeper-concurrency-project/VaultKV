@@ -58,10 +58,9 @@ func NewStore(nodeID string) (*Store, error) {
 	}
 
 	return &Store{
-		mutationCount: len(entries),
-		data:          data,
-		wal:           wal,
-		sst:           sst,
+		data: data,
+		wal:  wal,
+		sst:  sst,
 	}, nil
 }
 
@@ -82,9 +81,8 @@ func (s *Store) Set(key, value string) error {
 	}
 
 	s.data.Set(key, value)
-	s.data.SizeBytes += len(key) + len(value)
 
-	if s.data.SizeBytes >= memTableSizeThreshold {
+	if s.data.IsFull() {
 		err := s.sst.Flush(s.data)
 		if err != nil {
 			return err
@@ -121,9 +119,8 @@ func (s *Store) Delete(key string) error {
 	}
 
 	s.data.Delete(key)
-	s.data.SizeBytes += len(key) + len(tombstone)
 
-	if s.data.SizeBytes >= memTableSizeThreshold {
+	if s.data.IsFull() {
 		err := s.sst.Flush(s.data)
 		if err != nil {
 			return err

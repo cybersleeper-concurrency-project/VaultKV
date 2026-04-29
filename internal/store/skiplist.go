@@ -18,7 +18,7 @@ type Node struct {
 	level int
 }
 
-type Skiplist struct {	
+type Skiplist struct {
 	SizeBytes int
 	BeginNode *Node
 }
@@ -76,6 +76,8 @@ func (s *Skiplist) Set(k, v string) {
 	lastNodes := s.getUpdatePath(k)
 	candidate := lastNodes[0].Next[0]
 
+	s.SizeBytes += len(k) + len(v)
+
 	if candidate != nil && candidate.Key == k {
 		candidate.Value = v
 	} else {
@@ -95,4 +97,8 @@ func (s *Skiplist) Get(k string) (string, bool) {
 
 func (s *Skiplist) Delete(k string) {
 	s.Set(k, tombstone)
+}
+
+func (s *Skiplist) IsFull() bool {
+	return s.SizeBytes >= memTableSizeThreshold
 }
