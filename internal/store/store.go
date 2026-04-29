@@ -7,7 +7,7 @@ import (
 	"sync"
 )
 
-const mutationLimit = 100
+const memTableSizeThreshold = 4 * 1024 * 1024 // 4MB
 
 var validNodeID = regexp.MustCompile(`^[a-zA-Z0-9_-]+$`)
 
@@ -17,11 +17,10 @@ type Engine interface {
 }
 
 type Store struct {
-	mutationCount int
-	data          *Skiplist
-	mu            sync.RWMutex
-	wal           *WAL
-	sst           *SSTable
+	data *Skiplist
+	mu   sync.RWMutex
+	wal  *WAL
+	sst  *SSTable
 }
 
 func NewStore(nodeID string) (*Store, error) {
@@ -83,15 +82,14 @@ func (s *Store) Set(key, value string) error {
 	}
 
 	s.data.Set(key, value)
-	s.mutationCount++
+	s.data.SizeBytes += len(key) + len(value)
 
-	if s.mutationCount >= mutationLimit {
+	if s.data.SizeBytes >= memTableSizeThreshold {
 		err := s.sst.Flush(s.data)
 		if err != nil {
 			return err
 		}
 
-		s.mutationCount = 0
 		s.data = NewSkiplist()
 		s.wal.Clear()
 	}
@@ -123,15 +121,14 @@ func (s *Store) Delete(key string) error {
 	}
 
 	s.data.Delete(key)
-	s.mutationCount++
+	s.data.SizeBytes += len(key) + len(tombstone)
 
-	if s.mutationCount >= mutationLimit {
+	if s.data.SizeBytes >= memTableSizeThreshold {
 		err := s.sst.Flush(s.data)
 		if err != nil {
 			return err
 		}
 
-		s.mutationCount = 0
 		s.data = NewSkiplist()
 		s.wal.Clear()
 	}

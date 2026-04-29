@@ -18,7 +18,8 @@ type Node struct {
 	level int
 }
 
-type Skiplist struct {
+type Skiplist struct {	
+	SizeBytes int
 	BeginNode *Node
 }
 
