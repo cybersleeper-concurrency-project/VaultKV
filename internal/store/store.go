@@ -17,10 +17,11 @@ type Engine interface {
 }
 
 type Store struct {
-	data *Skiplist
-	mu   sync.RWMutex
-	wal  *WAL
-	sst  *SSTable
+	nodeId string
+	data   *Skiplist
+	mu     sync.RWMutex
+	wal    *WAL
+	sst    *SSTable
 }
 
 func NewStore(nodeID string) (*Store, error) {
@@ -28,7 +29,6 @@ func NewStore(nodeID string) (*Store, error) {
 		return nil, fmt.Errorf("invalid nodeID: %q", nodeID)
 	}
 
-	walFilename := "vault_" + nodeID + ".wal"
 	sstFilename := nodeID + ".sst"
 
 	data := NewSkiplist()
@@ -38,7 +38,7 @@ func NewStore(nodeID string) (*Store, error) {
 		return nil, fmt.Errorf("initializing SSTable: %w", err)
 	}
 
-	wal, err := NewWAL(walFilename)
+	wal, err := NewWAL(nodeID)
 	if err != nil {
 		return nil, fmt.Errorf("initializing WAL: %w", err)
 	}
@@ -58,9 +58,10 @@ func NewStore(nodeID string) (*Store, error) {
 	}
 
 	return &Store{
-		data: data,
-		wal:  wal,
-		sst:  sst,
+		nodeId: nodeID,
+		data:   data,
+		wal:    wal,
+		sst:    sst,
 	}, nil
 }
 
@@ -83,13 +84,7 @@ func (s *Store) Set(key, value string) error {
 	s.data.Set(key, value)
 
 	if s.data.IsFull() {
-		err := s.sst.Flush(s.data)
-		if err != nil {
-			return err
-		}
-
-		s.data = NewSkiplist()
-		s.wal.Clear()
+		s.FlushMemTable()
 	}
 
 	return nil
@@ -119,16 +114,27 @@ func (s *Store) Delete(key string) error {
 	}
 
 	s.data.Delete(key)
-
 	if s.data.IsFull() {
-		err := s.sst.Flush(s.data)
-		if err != nil {
-			return err
-		}
-
-		s.data = NewSkiplist()
-		s.wal.Clear()
+		s.FlushMemTable()
 	}
 
 	return nil
+}
+
+func (s *Store) FlushMemTable() {
+	frozenData := s.data
+	frozenWal := s.wal
+
+	s.data = NewSkiplist()
+	s.wal, _ = NewWAL(s.nodeId)
+
+	go func(dataToFlush *Skiplist, oldWal *WAL) {
+		err := s.sst.Flush(dataToFlush)
+		if err != nil {
+			fmt.Printf("Background flush failed: %v\n", err)
+			return
+		}
+
+		oldWal.Clear()
+	}(frozenData, frozenWal)
 }

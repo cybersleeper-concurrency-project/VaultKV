@@ -16,6 +16,7 @@ import (
 	"io"
 	"math"
 	"os"
+	"time"
 )
 
 type RecordType uint8
@@ -41,8 +42,10 @@ func NewLogEntry(k, v string) *LogEntry {
 	}
 }
 
-func NewWAL(path string) (*WAL, error) {
-	file, err := os.OpenFile(path, os.O_RDWR|os.O_APPEND|os.O_CREATE, 0644)
+func NewWAL(nodeId string) (*WAL, error) {
+	newWalName := fmt.Sprintf("vault_%s_%d.wal", nodeId, time.Now().UnixNano())
+
+	file, err := os.OpenFile(newWalName, os.O_RDWR|os.O_APPEND|os.O_CREATE, 0644)
 	if err != nil {
 		return nil, err
 	}
@@ -114,11 +117,11 @@ func (w *WAL) Clear() error {
 		return err
 	}
 
-	// (Crucial Step) When we use os.O_APPEND or normally write to a file, 
-	// Go keeps track of an internal "write cursor" (offset). If we only 
-	// Truncate(0), the file becomes 0 bytes, but the cursor might still 
-	// be at byte 10000. The next time you Append(), it would write 10,000 
-	// blank null-bytes first! Seek(0, ...) manually snaps that cursor 
+	// (Crucial Step) When we use os.O_APPEND or normally write to a file,
+	// Go keeps track of an internal "write cursor" (offset). If we only
+	// Truncate(0), the file becomes 0 bytes, but the cursor might still
+	// be at byte 10000. The next time you Append(), it would write 10,000
+	// blank null-bytes first! Seek(0, ...) manually snaps that cursor
 	// safely back to the beginning.
 	if _, err := w.file.Seek(0, io.SeekStart); err != nil {
 		return err
