@@ -20,11 +20,12 @@ type Engine interface {
 }
 
 type Store struct {
-	dir    string
-	nodeId string
-	data   *Skiplist
-	mu     sync.RWMutex
-	wal    *WAL
+	dir        string
+	nodeId     string
+	data       *Skiplist
+	mu         sync.RWMutex
+	wal        *WAL
+	OnFlushErr func(error) // Callback for background flush errors
 }
 
 func NewStore(dir, nodeID string) (*Store, error) {
@@ -137,8 +138,6 @@ func (s *Store) Delete(key string) error {
 
 	s.data.Delete(key)
 	if s.data.IsFull() {
-		if err := s.flushMemTable(); err != nil {
-			return err
 		if err := s.FlushMemTable(); err != nil {
 			return err
 		}
@@ -163,15 +162,23 @@ func (s *Store) FlushMemTable() error {
 	}
 
 	go func(dataToFlush *Skiplist, oldWal *WAL, sstFilename string) {
+		handleErr := func(err error) {
+			if s.OnFlushErr != nil {
+				s.OnFlushErr(err)
+			} else {
+				fmt.Printf("Background flush error: %v\n", err)
+			}
+		}
+
 		newSst, err := NewSSTable(filepath.Join(s.dir, sstFilename))
 		if err != nil {
-			fmt.Printf("Failed to create new SSTable: %v\n", err)
+			handleErr(fmt.Errorf("failed to create new SSTable: %w", err))
 			return
 		}
 
 		err = newSst.Flush(dataToFlush)
 		if err != nil {
-			fmt.Printf("Background flush failed: %v\n", err)
+			handleErr(fmt.Errorf("failed to flush SSTable: %w", err))
 			return
 		}
 
@@ -179,7 +186,9 @@ func (s *Store) FlushMemTable() error {
 		// built the logic to query from it yet)
 		newSst.Close()
 
-		oldWal.Delete()
+		if err := oldWal.Delete(); err != nil {
+			handleErr(fmt.Errorf("failed to delete obsolete WAL: %w", err))
+		}
 	}(frozenData, frozenWal, newSstName)
 
 	return nil
