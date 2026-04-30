@@ -163,6 +163,9 @@ func (s *Store) flushMemTable() error {
 	s.data = NewSkiplist()
 	s.wal = newWal
 
+	// TODO: Add flush tracking (e.g., sync.WaitGroup) to signal completion and allow
+	// graceful shutdown. Also implement a recovery path (e.g., retry queue or persistent state)
+	// so that frozenData is not permanently lost if the background flush fails.
 	go func(dataToFlush *Skiplist, oldWal *WAL, sstFilename string) {
 		handleErr := func(err error) {
 			if s.OnFlushErr != nil {

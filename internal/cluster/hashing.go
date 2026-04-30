@@ -12,6 +12,7 @@ type ConsistentHash struct {
 	replicas int
 	keys     []uint32
 	hashMap  map[uint32]string
+	nodes    map[string]struct{}
 	mu       sync.RWMutex
 }
 
@@ -19,6 +20,7 @@ func NewConsistentHash(replicas int) *ConsistentHash {
 	return &ConsistentHash{
 		replicas: replicas,
 		hashMap:  make(map[uint32]string),
+		nodes:    make(map[string]struct{}),
 	}
 }
 
@@ -27,11 +29,10 @@ func (c *ConsistentHash) AddNode(node string) {
 	defer c.mu.Unlock()
 
 	// Check if node already exists
-	for _, n := range c.hashMap {
-		if n == node {
-			return
-		}
+	if _, exists := c.nodes[node]; exists {
+		return
 	}
+	c.nodes[node] = struct{}{}
 
 	for idx := range c.replicas {
 		strIdx := strconv.Itoa(idx)

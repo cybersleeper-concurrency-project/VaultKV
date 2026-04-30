@@ -28,10 +28,21 @@ type SSTableLevel struct {
 }
 
 func (s *SSTable) Close() error {
-	if s.file != nil {
-		return s.file.Close()
+	var firstErr error
+	for _, level := range s.Entries {
+		if level != nil && level.file != nil {
+			if err := level.file.Close(); err != nil && firstErr == nil {
+				firstErr = err
+			}
+		}
 	}
-	return nil
+
+	if s.file != nil {
+		if err := s.file.Close(); err != nil && firstErr == nil {
+			firstErr = err
+		}
+	}
+	return firstErr
 }
 
 type indexEntry struct {
