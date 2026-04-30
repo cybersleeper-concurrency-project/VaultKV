@@ -131,6 +131,19 @@ func (w *WAL) Clear() error {
 	return nil
 }
 
+func (w *WAL) Delete() error {
+	if w.file == nil {
+		return nil
+	}
+
+	filename := w.file.Name()
+
+	w.file.Close()
+	w.file = nil
+
+	return os.Remove(filename)
+}
+
 func BatchBinaryWrite(w io.Writer, values ...any) error {
 	for _, v := range values {
 		if err := binary.Write(w, binary.LittleEndian, v); err != nil {
