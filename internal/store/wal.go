@@ -1,7 +1,9 @@
 package store
 
-// TODO: Currently I don't really handle the data corruption case. What I've implemented:
-// 	     [checksum(4)][type(1)][keyLen(2)][valLen(4)][key][value]
+// NOTE: Currently I don't really handle the data corruption case. What I've implemented:
+// 	     [checksum(4)][keyLen(2)][valLen(4)][key][value]
+//		 Each log-block will be appended to the same single file
+//
 // 	     For better reliability, we can add a partition to the wal bytes instead of
 // 	     just a single file. Then in each file we occupy the first 4B with a checksum
 // 	     for that entire file. This approach is already implemented in Cassandra
@@ -14,14 +16,6 @@ import (
 	"io"
 	"math"
 	"os"
-	"sync"
-)
-
-type RecordType uint8
-
-const (
-	RecordTypePut RecordType = iota
-	RecordTypeDelete
 )
 
 const (
@@ -30,18 +24,27 @@ const (
 )
 
 type LogEntry struct {
-	Type  RecordType
 	Key   string
 	Value string
 }
 
+// WAL represents a Write-Ahead Log.
+// Note: This struct is NOT thread-safe. Callers must synchronize
+// access externally (e.g., via a Mutex in the Store) to prevent
+// race conditions during Append, Close, and Delete operations.
 type WAL struct {
 	file *os.File
-	mu   sync.Mutex
 }
 
-func NewWAL(path string) (*WAL, error) {
-	file, err := os.OpenFile(path, os.O_RDWR|os.O_APPEND|os.O_CREATE, 0644)
+func NewLogEntry(k, v string) *LogEntry {
+	return &LogEntry{
+		Key:   k,
+		Value: v,
+	}
+}
+
+func NewWAL(filepath string) (*WAL, error) {
+	file, err := os.OpenFile(filepath, os.O_RDWR|os.O_APPEND|os.O_CREATE, 0644)
 	if err != nil {
 		return nil, err
 	}
@@ -53,8 +56,6 @@ func NewWAL(path string) (*WAL, error) {
 }
 
 func (w *WAL) Close() error {
-	w.mu.Lock()
-	defer w.mu.Unlock()
 	if w.file == nil {
 		return nil
 	}
@@ -71,9 +72,6 @@ func (w *WAL) Append(entry *LogEntry) error {
 		return fmt.Errorf("wal is closed")
 	}
 
-	w.mu.Lock()
-	defer w.mu.Unlock()
-
 	if err := entry.Encode(w.file); err != nil {
 		return err
 	}
@@ -87,9 +85,6 @@ func (w *WAL) ReadAll() ([]*LogEntry, error) {
 	if w.file == nil {
 		return nil, fmt.Errorf("wal is closed")
 	}
-
-	w.mu.Lock()
-	defer w.mu.Unlock()
 
 	if _, err := w.file.Seek(0, io.SeekStart); err != nil {
 		return nil, err
@@ -109,6 +104,48 @@ func (w *WAL) ReadAll() ([]*LogEntry, error) {
 		entries = append(entries, entry)
 	}
 	return entries, nil
+}
+
+func (w *WAL) Clear() error {
+	if w.file == nil {
+		return fmt.Errorf("wal is closed")
+	}
+
+	// Empty the file
+	if err := w.file.Truncate(0); err != nil {
+		return err
+	}
+
+	// (Crucial Step) When we use os.O_APPEND or normally write to a file,
+	// Go keeps track of an internal "write cursor" (offset). If we only
+	// Truncate(0), the file becomes 0 bytes, but the cursor might still
+	// be at byte 10000. The next time you Append(), it would write 10,000
+	// blank null-bytes first! Seek(0, ...) manually snaps that cursor
+	// safely back to the beginning.
+	if _, err := w.file.Seek(0, io.SeekStart); err != nil {
+		return err
+	}
+
+	if err := w.file.Sync(); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func (w *WAL) Delete() error {
+	if w.file == nil {
+		return nil
+	}
+
+	filename := w.file.Name()
+
+	if err := w.file.Close(); err != nil {
+		return err
+	}
+	w.file = nil
+
+	return os.Remove(filename)
 }
 
 func BatchBinaryWrite(w io.Writer, values ...any) error {
@@ -138,7 +175,7 @@ func (e *LogEntry) Encode(w io.Writer) error {
 	valLen := uint32(len(e.Value))
 	var buf bytes.Buffer
 
-	if err := BatchBinaryWrite(&buf, e.Type, keyLen, valLen); err != nil {
+	if err := BatchBinaryWrite(&buf, keyLen, valLen); err != nil {
 		return err
 	}
 
@@ -167,7 +204,7 @@ func (e *LogEntry) Decode(r io.Reader) error {
 	var keyLen uint16
 	var valLen uint32
 
-	if err := BatchBinaryRead(r, &checksum, &e.Type, &keyLen, &valLen); err != nil {
+	if err := BatchBinaryRead(r, &checksum, &keyLen, &valLen); err != nil {
 		return err
 	}
 
@@ -182,7 +219,7 @@ func (e *LogEntry) Decode(r io.Reader) error {
 	}
 
 	var buf bytes.Buffer
-	if err := BatchBinaryWrite(&buf, e.Type, keyLen, valLen, keyBytes, valBytes); err != nil {
+	if err := BatchBinaryWrite(&buf, keyLen, valLen, keyBytes, valBytes); err != nil {
 		return err
 	}
 
