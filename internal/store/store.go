@@ -156,7 +156,9 @@ func (s *Store) FlushMemTable() error {
 	frozenData := s.data
 	frozenWal := s.wal
 
-	newWalName := fmt.Sprintf("vault_%s_%d.wal", s.nodeId, time.Now().UnixNano())
+	timestamp := time.Now().UnixNano()
+	newWalName := fmt.Sprintf("vault_%s_%d.wal", s.nodeId, timestamp)
+	newSstName := fmt.Sprintf("vault_%s_%d.sst", s.nodeId, timestamp)
 
 	s.data = NewSkiplist()
 	var err error
@@ -165,15 +167,25 @@ func (s *Store) FlushMemTable() error {
 		return fmt.Errorf("failed to create new WAL: %w", err)
 	}
 
-	go func(dataToFlush *Skiplist, oldWal *WAL) {
-		err := s.sst.Flush(dataToFlush)
+	go func(dataToFlush *Skiplist, oldWal *WAL, sstFilename string) {
+		newSst, err := NewSSTable(sstFilename)
+		if err != nil {
+			fmt.Printf("Failed to create new SSTable: %v\n", err)
+			return
+		}
+
+		err = newSst.Flush(dataToFlush)
 		if err != nil {
 			fmt.Printf("Background flush failed: %v\n", err)
 			return
 		}
 
+		// Close the file descriptor so we don't leak memory (since we haven't 
+		// built the logic to query from it yet)
+		newSst.file.Close()
+
 		oldWal.Delete()
-	}(frozenData, frozenWal)
+	}(frozenData, frozenWal, newSstName)
 
 	return nil
 }
