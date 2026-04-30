@@ -138,7 +138,7 @@ func (s *Store) Delete(key string) error {
 
 	s.data.Delete(key)
 	if s.data.IsFull() {
-		if err := s.FlushMemTable(); err != nil {
+		if err := s.flushMemTable(); err != nil {
 			return err
 		}
 	}
@@ -146,20 +146,22 @@ func (s *Store) Delete(key string) error {
 	return nil
 }
 
-func (s *Store) FlushMemTable() error {
-	frozenData := s.data
-	frozenWal := s.wal
+func (s *Store) flushMemTable() error {
 
 	timestamp := time.Now().UnixNano()
 	newWalName := fmt.Sprintf("vault_%s_%d.wal", s.nodeId, timestamp)
 	newSstName := fmt.Sprintf("vault_%s_%d.sst", s.nodeId, timestamp)
 
-	s.data = NewSkiplist()
-	var err error
-	s.wal, err = NewWAL(filepath.Join(s.dir, newWalName))
+	newWal, err := NewWAL(filepath.Join(s.dir, newWalName))
 	if err != nil {
 		return fmt.Errorf("failed to create new WAL: %w", err)
 	}
+
+	frozenData := s.data
+	frozenWal := s.wal
+
+	s.data = NewSkiplist()
+	s.wal = newWal
 
 	go func(dataToFlush *Skiplist, oldWal *WAL, sstFilename string) {
 		handleErr := func(err error) {
@@ -177,14 +179,13 @@ func (s *Store) FlushMemTable() error {
 		}
 
 		err = newSst.Flush(dataToFlush)
+		// Close the file descriptor so we don't leak memory (since we haven't
+		// built the logic to query from it yet)
+		newSst.Close()
 		if err != nil {
 			handleErr(fmt.Errorf("failed to flush SSTable: %w", err))
 			return
 		}
-
-		// Close the file descriptor so we don't leak memory (since we haven't 
-		// built the logic to query from it yet)
-		newSst.Close()
 
 		if err := oldWal.Delete(); err != nil {
 			handleErr(fmt.Errorf("failed to delete obsolete WAL: %w", err))
