@@ -56,20 +56,14 @@ func NewSSTableEntry() *SSTableEntry {
 }
 
 func (s *SSTable) MergeSkiplist(skiplist *Skiplist) (*SSTableEntry, error) {
-	curNode := skiplist.BeginNode
 	sstableEntry := NewSSTableEntry()
+	
+	// Skip the dummy header node and start at the first real data node
+	curNode := skiplist.BeginNode.Next[0]
 
-	if curNode == nil {
-		return nil, fmt.Errorf("Skiplist is empty")
-	}
-
-	for {
+	for curNode != nil {
 		sstableEntry.LogEntries = append(sstableEntry.LogEntries, NewLogEntry(curNode.Key, curNode.Value))
-		if curNode.Next[0] != nil {
-			curNode = curNode.Next[0]
-		} else {
-			break
-		}
+		curNode = curNode.Next[0]
 	}
 
 	return sstableEntry, nil

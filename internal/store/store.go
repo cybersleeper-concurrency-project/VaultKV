@@ -49,6 +49,12 @@ func NewStore(nodeID string) (*Store, error) {
 
 	sort.Strings(walFiles)
 
+	// Note: Currently if there exist several frozen WALs, they all gonna be
+	// dumped into a single active MemTable. Ex: if there are three 4MB WALs,
+	// the MemT will be 12MB. As per 30 April 2026 this is perfectly fine as
+	// it will just trigger the IsFull() == true then get flushed as a massive
+	// 12MB block. But still, we need to be cautious and maintain carefully
+
 	for _, file := range walFiles {
 		oldWal, err := NewWAL(file)
 		if err != nil {
@@ -166,7 +172,7 @@ func (s *Store) FlushMemTable() error {
 			return
 		}
 
-		oldWal.Clear()
+		oldWal.Delete()
 	}(frozenData, frozenWal)
 
 	return nil
