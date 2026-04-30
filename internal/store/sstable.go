@@ -10,9 +10,6 @@ import (
 	"os"
 )
 
-const sstableLevelCount = 10
-const sstableEntryLimit = 10
-
 const maxEntryCntBytes = math.MaxUint16
 
 const magicNumber uint32 = 0xCAFEBABE
@@ -28,6 +25,13 @@ type SSTableEntry struct {
 
 type SSTableLevel struct {
 	file *os.File
+}
+
+func (s *SSTable) Close() error {
+	if s.file != nil {
+		return s.file.Close()
+	}
+	return nil
 }
 
 type indexEntry struct {
@@ -55,9 +59,9 @@ func NewSSTableEntry() *SSTableEntry {
 	}
 }
 
-func (s *SSTable) MergeSkiplist(skiplist *Skiplist) (*SSTableEntry, error) {
+func (s *SSTable) MergeSkiplist(skiplist *Skiplist) *SSTableEntry {
 	sstableEntry := NewSSTableEntry()
-	
+
 	// Skip the dummy header node and start at the first real data node
 	curNode := skiplist.BeginNode.Next[0]
 
@@ -66,7 +70,7 @@ func (s *SSTable) MergeSkiplist(skiplist *Skiplist) (*SSTableEntry, error) {
 		curNode = curNode.Next[0]
 	}
 
-	return sstableEntry, nil
+	return sstableEntry
 }
 
 func (s *SSTable) Append(entry *SSTableEntry) error {
@@ -88,10 +92,7 @@ func (s *SSTable) Append(entry *SSTableEntry) error {
 }
 
 func (s *SSTable) Flush(skiplist *Skiplist) error {
-	sstEntry, err := s.MergeSkiplist(skiplist)
-	if err != nil {
-		return err
-	}
+	sstEntry := s.MergeSkiplist(skiplist)
 
 	if err := s.Append(sstEntry); err != nil {
 		return err
@@ -108,7 +109,7 @@ func (s *SSTable) Compaction(toLevel int) {
 }
 
 func (e *SSTableEntry) Encode(w io.Writer) error {
-	if uint16(len(e.LogEntries)) > maxEntryCntBytes {
+	if len(e.LogEntries) > int(maxEntryCntBytes) {
 		return fmt.Errorf("entry length too large: %d, limit=%d", len(e.LogEntries), maxEntryCntBytes)
 	}
 
@@ -124,11 +125,14 @@ func (e *SSTableEntry) Encode(w io.Writer) error {
 	indexSlice := make([]indexEntry, dataLen)
 
 	for i, v := range e.LogEntries {
-		var keyLen uint16
-		var valLen uint32
-
-		keyLen = uint16(len(v.Key))
-		valLen = uint32(len(v.Value))
+		if len(v.Key) > math.MaxUint16 {
+			return fmt.Errorf("key too long: %d bytes, max %d", len(v.Key), math.MaxUint16)
+		}
+		if len(v.Value) > math.MaxUint32 {
+			return fmt.Errorf("value too long: %d bytes, max %d", len(v.Value), math.MaxUint32)
+		}
+		keyLen := uint16(len(v.Key))
+		valLen := uint32(len(v.Value))
 
 		indexSlice[i] = indexEntry{
 			pointer: uint32(buf.Len()),
@@ -237,10 +241,10 @@ func (e *SSTableEntry) Decode(r io.Reader) error {
 		if err := binary.Write(&buf, binary.LittleEndian, valLen); err != nil {
 			return err
 		}
-		if _, err := buf.Write([]byte(keyBytes)); err != nil {
+		if _, err := buf.Write(keyBytes); err != nil {
 			return err
 		}
-		if _, err := buf.Write([]byte(valBytes)); err != nil {
+		if _, err := buf.Write(valBytes); err != nil {
 			return err
 		}
 
@@ -285,6 +289,11 @@ func (e *SSTableEntry) Decode(r io.Reader) error {
 	if err := binary.Read(r, binary.LittleEndian, &curMagicNumber); err != nil {
 		return err
 	}
+
+	if curMagicNumber != magicNumber {
+		return fmt.Errorf("invalid magic number: got 0x%X, expected 0x%X", curMagicNumber, magicNumber)
+	}
+
 	if err := binary.Write(&buf, binary.LittleEndian, curIndexOffset); err != nil {
 		return err
 	}

@@ -20,28 +20,21 @@ type Engine interface {
 }
 
 type Store struct {
+	dir    string
 	nodeId string
 	data   *Skiplist
 	mu     sync.RWMutex
 	wal    *WAL
-	sst    *SSTable
 }
 
-func NewStore(nodeID string) (*Store, error) {
+func NewStore(dir, nodeID string) (*Store, error) {
 	if !validNodeID.MatchString(nodeID) {
 		return nil, fmt.Errorf("invalid nodeID: %q", nodeID)
 	}
 
-	sstFilename := nodeID + ".sst"
-
 	data := NewSkiplist()
 
-	sst, err := NewSSTable(sstFilename)
-	if err != nil {
-		return nil, fmt.Errorf("initializing SSTable: %w", err)
-	}
-
-	pattern := fmt.Sprintf("vault_%s_*.wal", nodeID)
+	pattern := filepath.Join(dir, fmt.Sprintf("vault_%s_*.wal", nodeID))
 	walFiles, err := filepath.Glob(pattern)
 	if err != nil {
 		return nil, fmt.Errorf("failed to scan for old WALs: %w", err)
@@ -79,16 +72,16 @@ func NewStore(nodeID string) (*Store, error) {
 
 	newWalName := fmt.Sprintf("vault_%s_%d.wal", nodeID, time.Now().UnixNano())
 
-	wal, err := NewWAL(newWalName)
+	wal, err := NewWAL(filepath.Join(dir, newWalName))
 	if err != nil {
 		return nil, fmt.Errorf("initializing WAL: %w", err)
 	}
 
 	return &Store{
+		dir:    dir,
 		nodeId: nodeID,
 		data:   data,
 		wal:    wal,
-		sst:    sst,
 	}, nil
 }
 
@@ -111,7 +104,7 @@ func (s *Store) Set(key, value string) error {
 	s.data.Set(key, value)
 
 	if s.data.IsFull() {
-		if err := s.FlushMemTable(); err != nil {
+		if err := s.flushMemTable(); err != nil {
 			return err
 		}
 	}
@@ -144,6 +137,8 @@ func (s *Store) Delete(key string) error {
 
 	s.data.Delete(key)
 	if s.data.IsFull() {
+		if err := s.flushMemTable(); err != nil {
+			return err
 		if err := s.FlushMemTable(); err != nil {
 			return err
 		}
@@ -162,13 +157,13 @@ func (s *Store) FlushMemTable() error {
 
 	s.data = NewSkiplist()
 	var err error
-	s.wal, err = NewWAL(newWalName)
+	s.wal, err = NewWAL(filepath.Join(s.dir, newWalName))
 	if err != nil {
 		return fmt.Errorf("failed to create new WAL: %w", err)
 	}
 
 	go func(dataToFlush *Skiplist, oldWal *WAL, sstFilename string) {
-		newSst, err := NewSSTable(sstFilename)
+		newSst, err := NewSSTable(filepath.Join(s.dir, sstFilename))
 		if err != nil {
 			fmt.Printf("Failed to create new SSTable: %v\n", err)
 			return
@@ -182,7 +177,7 @@ func (s *Store) FlushMemTable() error {
 
 		// Close the file descriptor so we don't leak memory (since we haven't 
 		// built the logic to query from it yet)
-		newSst.file.Close()
+		newSst.Close()
 
 		oldWal.Delete()
 	}(frozenData, frozenWal, newSstName)

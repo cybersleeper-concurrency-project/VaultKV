@@ -89,8 +89,6 @@ func TestSSTable_Decode_Option3(t *testing.T) {
 	// 4. Fire the Decode parsing!
 	decoded := NewSSTableEntry()
 
-	// Hint: You might need to change Decode() to accept io.ReadSeeker instead of io.Reader
-	// so you can use r.Seek(-4, io.SeekEnd) to read your checksum!
 	err = decoded.Decode(reader)
 	if err != nil {
 		t.Fatalf("Decode failed: %v", err)

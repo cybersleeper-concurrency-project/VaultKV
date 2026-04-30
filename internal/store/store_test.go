@@ -11,26 +11,16 @@ import (
 
 // setupStore creates a completely isolated new Store instance using a temporary file path
 func setupStore(t *testing.T, prefix string) (*Store, func()) {
-	// Create a unique nodeID for the temporary file
-	// Use t.TempDir() to guarantee cleanup of files when the test is done
-
-	// // Create a unique nodeID for the temporary file
 	nodeID := prefix + "_testnode"
+	dir := t.TempDir()
 
-	// Since NewStore automatically hardcodes the prefix "vault_", we must ensure we test in isolation
-	// We'll temporarily override the directory by running the test from inside the tempdir,
-	// OR we can just allow the store to create it in the local test folder if we clean it up later.
-	// For testing, it's safer to build a specific init function, but we will wrap the NewStore call.
-
-	s, err := NewStore(nodeID)
+	s, err := NewStore(dir, nodeID)
 	if err != nil {
 		t.Fatalf("failed to initialize store: %v", err)
 	}
 
-	// Move the WAL file to our temp directory manually to avoid cluttering the project root
-	// Since NewStore hardcodes the local path, we have to clean up the local directory
+	// We no longer need to manually delete the file because t.TempDir() handles it!
 	cleanup := func() {
-		os.Remove("vault_" + nodeID + ".wal")
 	}
 
 	return s, cleanup
@@ -64,9 +54,10 @@ func TestStore_SetGetDelete(t *testing.T) {
 
 func TestStore_RecoveryFromWAL(t *testing.T) {
 	nodeID := "recovery_testnode"
+	dir := t.TempDir()
 
 	// 1. Initialize a generic store and write some data
-	s1, err := NewStore(nodeID)
+	s1, err := NewStore(dir, nodeID)
 	if err != nil {
 		t.Fatalf("failed to init first store: %v", err)
 	}
@@ -75,14 +66,13 @@ func TestStore_RecoveryFromWAL(t *testing.T) {
 	s1.Delete("deleted_key")
 	s1.wal.Close() // Simulate a crash / shutdown
 
-	// 2. Start a brand new Store instance pointing to the exact same file
-	s2, err := NewStore(nodeID)
+	// 2. Start a brand new Store instance pointing to the exact same directory
+	s2, err := NewStore(dir, nodeID)
 	if err != nil {
 		t.Fatalf("failed to init recovered store: %v", err)
 	}
 	defer func() {
 		s2.wal.Close()
-		os.Remove("vault_" + nodeID + ".wal")
 	}()
 
 	// 3. Verify the MemTable was accurately rebuilt from the WAL entries (Puts and Tombstones)

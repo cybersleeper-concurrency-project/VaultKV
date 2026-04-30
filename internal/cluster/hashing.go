@@ -26,11 +26,24 @@ func (c *ConsistentHash) AddNode(node string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
+	// Check if node already exists
+	for _, n := range c.hashMap {
+		if n == node {
+			return
+		}
+	}
+
 	for idx := range c.replicas {
 		strIdx := strconv.Itoa(idx)
 		vKey := node + "#" + strIdx
 
 		hash := crc32.ChecksumIEEE([]byte(vKey))
+
+		// Naive collision handling
+		for c.hashMap[hash] != "" {
+			hash++
+		}
+
 		c.keys = append(c.keys, hash)
 		c.hashMap[hash] = node
 	}

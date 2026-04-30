@@ -76,11 +76,11 @@ func (s *Skiplist) Set(k, v string) {
 	lastNodes := s.getUpdatePath(k)
 	candidate := lastNodes[0].Next[0]
 
-	s.SizeBytes += len(k) + len(v)
-
 	if candidate != nil && candidate.Key == k {
+		s.SizeBytes += len(v) - len(candidate.Value)
 		candidate.Value = v
 	} else {
+		s.SizeBytes += len(k) + len(v)
 		s.insert(lastNodes, k, v)
 	}
 }

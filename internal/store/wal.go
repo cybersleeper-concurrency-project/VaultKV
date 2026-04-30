@@ -18,8 +18,6 @@ import (
 	"os"
 )
 
-type RecordType uint8
-
 const (
 	maxWALKeyBytes   = math.MaxUint16
 	maxWALValueBytes = math.MaxUint32
@@ -30,6 +28,10 @@ type LogEntry struct {
 	Value string
 }
 
+// WAL represents a Write-Ahead Log.
+// Note: This struct is NOT thread-safe. Callers must synchronize
+// access externally (e.g., via a Mutex in the Store) to prevent
+// race conditions during Append, Close, and Delete operations.
 type WAL struct {
 	file *os.File
 }
@@ -138,7 +140,9 @@ func (w *WAL) Delete() error {
 
 	filename := w.file.Name()
 
-	w.file.Close()
+	if err := w.file.Close(); err != nil {
+		return err
+	}
 	w.file = nil
 
 	return os.Remove(filename)
