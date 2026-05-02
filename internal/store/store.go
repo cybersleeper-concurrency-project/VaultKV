@@ -19,13 +19,21 @@ type Engine interface {
 	Get(key string) (string, bool)
 }
 
+type flushTask struct {
+	data    *Skiplist
+	wal     *WAL
+	sstName string
+}
+
 type Store struct {
-	dir        string
-	nodeId     string
-	data       *Skiplist
-	mu         sync.RWMutex
-	wal        *WAL
-	OnFlushErr func(error) // Callback for background flush errors
+	dir         string
+	nodeId      string
+	data        *Skiplist
+	frozenMemTs []*Skiplist
+	flushChan   chan *flushTask
+	mu          sync.RWMutex
+	wal         *WAL
+	OnFlushErr  func(error) // Callback for background flush errors
 }
 
 func NewStore(dir, nodeID string) (*Store, error) {
@@ -78,12 +86,18 @@ func NewStore(dir, nodeID string) (*Store, error) {
 		return nil, fmt.Errorf("initializing WAL: %w", err)
 	}
 
-	return &Store{
-		dir:    dir,
-		nodeId: nodeID,
-		data:   data,
-		wal:    wal,
-	}, nil
+	storeObj := &Store{
+		dir:         dir,
+		nodeId:      nodeID,
+		data:        data,
+		frozenMemTs: make([]*Skiplist, 0),
+		flushChan:   make(chan *flushTask, 10),
+		wal:         wal,
+	}
+
+	go storeObj.flushWorker()
+
+	return storeObj, nil
 }
 
 func (s *Store) Set(key, value string) error {
@@ -120,8 +134,20 @@ func (s *Store) Get(key string) (string, bool) {
 	// 1. Active MemTable
 	// 2. Frozen MemTables in order from newest to oldest
 	// 3. SSTables on disk in order from newest to oldest
-	val, exists := s.data.Get(key)
-	return val, exists
+
+	// 1. Check Active MemTable
+	if val, exists := s.data.Get(key); exists {
+		return val, true
+	}
+
+	// 2. Check Frozen MemTables (newest to oldest)
+	for i := len(s.frozenMemTs) - 1; i >= 0; i-- {
+		if val, exists := s.frozenMemTs[i].Get(key); exists {
+			return val, true
+		}
+	}
+
+	return "", false
 }
 
 func (s *Store) Delete(key string) error {
@@ -164,13 +190,23 @@ func (s *Store) flushMemTable() error {
 	frozenData := s.data
 	frozenWal := s.wal
 
+	// Freeze the memtable so it can still be queried during the flush
+	s.frozenMemTs = append(s.frozenMemTs, frozenData)
 	s.data = NewSkiplist()
 	s.wal = newWal
 
-	// TODO: Add flush tracking (e.g., sync.WaitGroup) to signal completion and allow
-	// graceful shutdown. Also implement a recovery path (e.g., retry queue or persistent state)
-	// so that frozenData is not permanently lost if the background flush fails.
-	go func(dataToFlush *Skiplist, oldWal *WAL, sstFilename string) {
+	// Push to the background worker
+	s.flushChan <- &flushTask{
+		data:    frozenData,
+		wal:     frozenWal,
+		sstName: newSstName,
+	}
+
+	return nil
+}
+
+func (s *Store) flushWorker() {
+	for task := range s.flushChan {
 		handleErr := func(err error) {
 			if s.OnFlushErr != nil {
 				s.OnFlushErr(err)
@@ -179,25 +215,30 @@ func (s *Store) flushMemTable() error {
 			}
 		}
 
-		newSst, err := NewSSTable(filepath.Join(s.dir, sstFilename))
+		newSst, err := NewSSTable(filepath.Join(s.dir, task.sstName))
 		if err != nil {
 			handleErr(fmt.Errorf("failed to create new SSTable: %w", err))
-			return
+			continue
 		}
 
-		err = newSst.Flush(dataToFlush)
-		// Close the file descriptor so we don't leak memory (since we haven't
-		// built the logic to query from it yet)
+		err = newSst.Flush(task.data)
 		newSst.Close()
 		if err != nil {
 			handleErr(fmt.Errorf("failed to flush SSTable: %w", err))
-			return
+			continue
 		}
 
-		if err := oldWal.Delete(); err != nil {
+		if err := task.wal.Delete(); err != nil {
 			handleErr(fmt.Errorf("failed to delete obsolete WAL: %w", err))
 		}
-	}(frozenData, frozenWal, newSstName)
 
-	return nil
+		// Success, then remove the flushed Skiplist from the front of frozenMemTs
+		// We must lock here as we are about to "write" (deleting a Frozen MemT)
+		s.mu.Lock()
+		if len(s.frozenMemTs) > 0 {
+			s.frozenMemTs[0] = nil // Avoid memory leak, tell GC to sweep it
+			s.frozenMemTs = s.frozenMemTs[1:]
+		}
+		s.mu.Unlock()
+	}
 }
