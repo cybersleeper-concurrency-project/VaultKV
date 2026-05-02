@@ -21,9 +21,10 @@ func main() {
 	logger.Init(cfg.LogLevel)
 
 	port := flag.String("port", "8080", "server port")
+	dataDir := flag.String("dir", ".", "directory for storing data files")
 	flag.Parse()
 
-	kvStore, err := store.NewStore(*port)
+	kvStore, err := store.NewStore(*dataDir, *port)
 	if err != nil {
 		log.Fatalf("Failed to initiate the store: %v", err)
 	}

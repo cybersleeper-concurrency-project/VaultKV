@@ -27,6 +27,11 @@ type SSTableLevel struct {
 	file *os.File
 }
 
+type IndexBlockEntry struct {
+	ptr      uint32
+	keyBytes []byte
+}
+
 func (s *SSTable) Close() error {
 	var firstErr error
 	for _, level := range s.Entries {
@@ -326,7 +331,65 @@ func (e *SSTableEntry) Decode(r io.Reader) error {
 	return nil
 }
 
-// TODO:
-// - Determine how we gonna store the entries from LSM to SST (see WAL, it should be similar storing implementation)
-// - Implement the MergeSSTableLevel
-// - Implement the Compaction
+func (e *SSTableEntry) GetIndexBlock(r io.ReadSeeker) ([]IndexBlockEntry, error) {
+	// 1. Jump straight to the Footer (last 12 bytes of the file)
+	// (IndexOffset: 4 bytes, MagicNumber: 4 bytes, Checksum: 4 bytes)
+	footerStart, err := r.Seek(-12, io.SeekEnd)
+	if err != nil {
+		return nil, err
+	}
+
+	var indexOffset uint32
+	var magic uint32
+	var checksum uint32
+
+	if err := binary.Read(r, binary.LittleEndian, &indexOffset); err != nil {
+		return nil, err
+	}
+	if err := binary.Read(r, binary.LittleEndian, &magic); err != nil {
+		return nil, err
+	}
+	if err := binary.Read(r, binary.LittleEndian, &checksum); err != nil {
+		return nil, err
+	}
+
+	if magic != magicNumber {
+		return nil, fmt.Errorf("invalid magic number: got 0x%X, expected 0x%X", magic, magicNumber)
+	}
+
+	// 2. Jump to the exact byte where the Index Block starts
+	if _, err := r.Seek(int64(indexOffset), io.SeekStart); err != nil {
+		return nil, err
+	}
+
+	// 3. Read everything between IndexOffset and FooterStart
+	indexSize := footerStart - int64(indexOffset)
+	limitReader := io.LimitReader(r, indexSize)
+
+	var indices []IndexBlockEntry
+
+	for {
+		var entry IndexBlockEntry
+		err := binary.Read(limitReader, binary.LittleEndian, &entry.ptr)
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return nil, err
+		}
+
+		var keyLen uint16
+		if err := binary.Read(limitReader, binary.LittleEndian, &keyLen); err != nil {
+			return nil, err
+		}
+
+		entry.keyBytes = make([]byte, keyLen)
+		if _, err := io.ReadFull(limitReader, entry.keyBytes); err != nil {
+			return nil, err
+		}
+
+		indices = append(indices, entry)
+	}
+
+	return indices, nil
+}

@@ -116,6 +116,10 @@ func (s *Store) Set(key, value string) error {
 func (s *Store) Get(key string) (string, bool) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
+	// TODO: query in this exact order:
+	// 1. Active MemTable
+	// 2. Frozen MemTables in order from newest to oldest
+	// 3. SSTables on disk in order from newest to oldest
 	val, exists := s.data.Get(key)
 	return val, exists
 }
