@@ -5,7 +5,6 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
-	"io"
 	"path/filepath"
 	"regexp"
 	"slices"
@@ -204,26 +203,27 @@ func (s *Store) Get(targetKey string) (string, bool) {
 			exactPtr := curSst.indexEntries[idx].ptr
 			keyLen := len(targetKey)
 
-			// 1. exactPtr points to the beginning of the record (the 2-byte keyLen).
-			// We already know keyLen, so we skip it (+2) to read the 4-byte valLen.
-			if _, err := curSst.fd.Seek(int64(exactPtr+2), io.SeekStart); err != nil {
+			// Note: Do not use fd.Seek as it will change the global fd, which will ofc
+			// mess with the concurrency as we are using Rlock here. Use ReadAt instead
+			// The implementation at 05 May 2026 is already tested and checked thoroughtly
+			// So supposedly it is already correct UwU (hopefully)
+
+			// Trivia: ReadAt maps to pread in Unix system, so it is atomic read
+
+			// exactPtr points to the beginning of the record (the 2-byte keyLen).
+			// The 4-byte valLen is located right after keyLen (exactPtr + 2).
+			valLenBytes := make([]byte, 4)
+			if _, err := curSst.fd.ReadAt(valLenBytes, int64(exactPtr+2)); err != nil {
 				return "", false
 			}
+			valLen := binary.LittleEndian.Uint32(valLenBytes)
 
-			// 2. Read the 4-byte valLen
-			var valLen uint32
-			if err := binary.Read(curSst.fd, binary.LittleEndian, &valLen); err != nil {
-				return "", false
-			}
+			// The actual Value bytes are located after keyLen, valLen, and the Key string.
+			// Offset = exactPtr + 2 (keyLen) + 4 (valLen) + keyLen (the actual key bytes)
+			valOffset := int64(exactPtr) + 2 + 4 + int64(keyLen)
 
-			// 3. Skip over the actual Key string bytes using SeekCurrent
-			if _, err := curSst.fd.Seek(int64(keyLen), io.SeekCurrent); err != nil {
-				return "", false
-			}
-
-			// 4. Read the exact Value bytes!
 			valBytes := make([]byte, valLen)
-			if _, err := io.ReadFull(curSst.fd, valBytes); err != nil {
+			if _, err := curSst.fd.ReadAt(valBytes, valOffset); err != nil {
 				return "", false
 			}
 
