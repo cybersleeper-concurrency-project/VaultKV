@@ -14,17 +14,15 @@ const maxEntryCntBytes = math.MaxUint16
 
 const magicNumber uint32 = 0xCAFEBABE
 
+// SSTable represents a single .sst file
 type SSTable struct {
-	file    *os.File
-	Entries []*SSTableLevel
+	fd           *os.File
+	filename     string
+	indexEntries []*IndexBlockEntry
 }
 
 type SSTableEntry struct {
 	LogEntries []*LogEntry
-}
-
-type SSTableLevel struct {
-	file *os.File
 }
 
 type IndexBlockEntry struct {
@@ -34,16 +32,9 @@ type IndexBlockEntry struct {
 
 func (s *SSTable) Close() error {
 	var firstErr error
-	for _, level := range s.Entries {
-		if level != nil && level.file != nil {
-			if err := level.file.Close(); err != nil && firstErr == nil {
-				firstErr = err
-			}
-		}
-	}
 
-	if s.file != nil {
-		if err := s.file.Close(); err != nil && firstErr == nil {
+	if s.fd != nil {
+		if err := s.fd.Close(); err != nil && firstErr == nil {
 			firstErr = err
 		}
 	}
@@ -63,8 +54,9 @@ func NewSSTable(path string) (*SSTable, error) {
 	}
 
 	sstable := &SSTable{
-		file:    file,
-		Entries: make([]*SSTableLevel, 0),
+		fd:           file,
+		filename:     path,
+		indexEntries: make([]*IndexBlockEntry, 0),
 	}
 	return sstable, nil
 }
@@ -93,14 +85,14 @@ func (s *SSTable) Append(entry *SSTableEntry) error {
 	if entry == nil {
 		return fmt.Errorf("nil sst entry")
 	}
-	if s.file == nil {
+	if s.fd == nil {
 		return fmt.Errorf("sst is nil")
 	}
 
-	if err := entry.Encode(s.file); err != nil {
+	if err := entry.Encode(s.fd); err != nil {
 		return err
 	}
-	if err := s.file.Sync(); err != nil {
+	if err := s.fd.Sync(); err != nil {
 		return err
 	}
 
@@ -121,7 +113,6 @@ func (s *SSTable) Flush(skiplist *Skiplist) error {
 // Skiplist first
 func (s *SSTable) Compaction(toLevel int) {
 	// TODO
-
 }
 
 func (e *SSTableEntry) Encode(w io.Writer) error {
@@ -331,42 +322,45 @@ func (e *SSTableEntry) Decode(r io.Reader) error {
 	return nil
 }
 
-func (e *SSTableEntry) GetIndexBlock(r io.ReadSeeker) ([]IndexBlockEntry, error) {
+func (e *SSTable) LoadIndexBlock() error {
 	// 1. Jump straight to the Footer (last 12 bytes of the file)
 	// (IndexOffset: 4 bytes, MagicNumber: 4 bytes, Checksum: 4 bytes)
-	footerStart, err := r.Seek(-12, io.SeekEnd)
+
+	fd := e.fd
+
+	footerStart, err := fd.Seek(-12, io.SeekEnd)
 	if err != nil {
-		return nil, err
+		return err
 	}
 
 	var indexOffset uint32
 	var magic uint32
 	var checksum uint32
 
-	if err := binary.Read(r, binary.LittleEndian, &indexOffset); err != nil {
-		return nil, err
+	if err := binary.Read(fd, binary.LittleEndian, &indexOffset); err != nil {
+		return err
 	}
-	if err := binary.Read(r, binary.LittleEndian, &magic); err != nil {
-		return nil, err
+	if err := binary.Read(fd, binary.LittleEndian, &magic); err != nil {
+		return err
 	}
-	if err := binary.Read(r, binary.LittleEndian, &checksum); err != nil {
-		return nil, err
+	if err := binary.Read(fd, binary.LittleEndian, &checksum); err != nil {
+		return err
 	}
 
 	if magic != magicNumber {
-		return nil, fmt.Errorf("invalid magic number: got 0x%X, expected 0x%X", magic, magicNumber)
+		return fmt.Errorf("invalid magic number: got 0x%X, expected 0x%X", magic, magicNumber)
 	}
 
 	// 2. Jump to the exact byte where the Index Block starts
-	if _, err := r.Seek(int64(indexOffset), io.SeekStart); err != nil {
-		return nil, err
+	if _, err := fd.Seek(int64(indexOffset), io.SeekStart); err != nil {
+		return err
 	}
 
 	// 3. Read everything between IndexOffset and FooterStart
 	indexSize := footerStart - int64(indexOffset)
-	limitReader := io.LimitReader(r, indexSize)
+	limitReader := io.LimitReader(fd, indexSize)
 
-	var indices []IndexBlockEntry
+	var indices []*IndexBlockEntry
 
 	for {
 		var entry IndexBlockEntry
@@ -375,21 +369,23 @@ func (e *SSTableEntry) GetIndexBlock(r io.ReadSeeker) ([]IndexBlockEntry, error)
 			break
 		}
 		if err != nil {
-			return nil, err
+			return err
 		}
 
 		var keyLen uint16
 		if err := binary.Read(limitReader, binary.LittleEndian, &keyLen); err != nil {
-			return nil, err
+			return err
 		}
 
 		entry.keyBytes = make([]byte, keyLen)
 		if _, err := io.ReadFull(limitReader, entry.keyBytes); err != nil {
-			return nil, err
+			return err
 		}
 
-		indices = append(indices, entry)
+		indices = append(indices, &entry)
 	}
 
-	return indices, nil
+	e.indexEntries = indices
+
+	return nil
 }

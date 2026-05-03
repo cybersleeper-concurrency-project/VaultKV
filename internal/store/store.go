@@ -30,6 +30,7 @@ type Store struct {
 	nodeId      string
 	data        *Skiplist
 	frozenMemTs []*Skiplist
+	sstables    []*SSTable
 	flushChan   chan *flushTask
 	mu          sync.RWMutex
 	wal         *WAL
@@ -43,8 +44,33 @@ func NewStore(dir, nodeID string) (*Store, error) {
 
 	data := NewSkiplist()
 
-	pattern := filepath.Join(dir, fmt.Sprintf("vault_%s_*.wal", nodeID))
-	walFiles, err := filepath.Glob(pattern)
+	// Load existing SSTs
+	sstPattern := filepath.Join(dir, fmt.Sprintf("vault_%s_*.sst", nodeID))
+	sstFiles, err := filepath.Glob(sstPattern)
+	if err != nil {
+		return nil, fmt.Errorf("failed to scan for old SSTs: %w", err)
+	}
+
+	existingSstables := make([]*SSTable, len(sstFiles))
+
+	sort.Strings(sstFiles)
+
+	for i, file := range sstFiles {
+		curSst, err := NewSSTable(file)
+		if err != nil {
+			return nil, fmt.Errorf("failed to open old SST %s: %w", file, err)
+		}
+
+		if err := curSst.LoadIndexBlock(); err != nil {
+			return nil, fmt.Errorf("corrupted SST detected in %s: %w", file, err)
+		}
+
+		existingSstables[i] = curSst
+	}
+
+	// Load data from the existing WALs
+	walPattern := filepath.Join(dir, fmt.Sprintf("vault_%s_*.wal", nodeID))
+	walFiles, err := filepath.Glob(walPattern)
 	if err != nil {
 		return nil, fmt.Errorf("failed to scan for old WALs: %w", err)
 	}
@@ -91,6 +117,7 @@ func NewStore(dir, nodeID string) (*Store, error) {
 		nodeId:      nodeID,
 		data:        data,
 		frozenMemTs: make([]*Skiplist, 0),
+		sstables:    existingSstables,
 		flushChan:   make(chan *flushTask, 10),
 		wal:         wal,
 	}
@@ -145,6 +172,20 @@ func (s *Store) Get(key string) (string, bool) {
 		if val, exists := s.frozenMemTs[i].Get(key); exists {
 			return val, true
 		}
+	}
+
+	// 3. SSTables on disk (newest to oldest)
+	pattern := filepath.Join(s.dir, fmt.Sprintf("vault_%s_*.sst", s.nodeId))
+	sstFiles, err := filepath.Glob(pattern)
+	if err != nil {
+		fmt.Errorf("failed to scan for SST: %w", err)
+		return "", false
+	}
+
+	sort.Strings(sstFiles)
+
+	for i := len(s.sstables) - 1; i >= 0; i-- {
+		// TODO: binser
 	}
 
 	return "", false
@@ -235,10 +276,9 @@ func (s *Store) flushWorker() {
 		// Success, then remove the flushed Skiplist from the front of frozenMemTs
 		// We must lock here as we are about to "write" (deleting a Frozen MemT)
 		s.mu.Lock()
-		if len(s.frozenMemTs) > 0 {
-			s.frozenMemTs[0] = nil // Avoid memory leak, tell GC to sweep it
-			s.frozenMemTs = s.frozenMemTs[1:]
-		}
+		s.frozenMemTs[0] = nil // Avoid memory leak, tell GC to sweep it
+		s.frozenMemTs = s.frozenMemTs[1:]
+		s.sstables = append(s.sstables, newSst)
 		s.mu.Unlock()
 	}
 }
