@@ -34,7 +34,7 @@ func (s *SSTable) Close() error {
 	var firstErr error
 
 	if s.fd != nil {
-		if err := s.fd.Close(); err != nil && firstErr == nil {
+		if err := s.fd.Close(); err != nil {
 			firstErr = err
 		}
 	}

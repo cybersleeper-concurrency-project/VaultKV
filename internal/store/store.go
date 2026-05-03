@@ -66,6 +66,11 @@ func NewStore(dir, nodeID string) (*Store, error) {
 		}
 
 		if err := curSst.LoadIndexBlock(); err != nil {
+			curSst.Close()
+			// Cleanup previously opened files to prevent FD leaks
+			for j := range i {
+				existingSstables[j].Close()
+			}
 			return nil, fmt.Errorf("corrupted SST detected in %s: %w", file, err)
 		}
 
@@ -76,6 +81,9 @@ func NewStore(dir, nodeID string) (*Store, error) {
 	walPattern := filepath.Join(dir, fmt.Sprintf("vault_%s_*.wal", nodeID))
 	walFiles, err := filepath.Glob(walPattern)
 	if err != nil {
+		for _, sst := range existingSstables {
+			sst.Close()
+		}
 		return nil, fmt.Errorf("failed to scan for old WALs: %w", err)
 	}
 
@@ -90,12 +98,18 @@ func NewStore(dir, nodeID string) (*Store, error) {
 	for _, file := range walFiles {
 		oldWal, err := NewWAL(file)
 		if err != nil {
+			for _, sst := range existingSstables {
+				sst.Close()
+			}
 			return nil, fmt.Errorf("failed to open old WAL %s: %w", file, err)
 		}
 
 		entries, err := oldWal.ReadAll()
 		if err != nil {
 			oldWal.Close()
+			for _, sst := range existingSstables {
+				sst.Close()
+			}
 			return nil, fmt.Errorf("corrupted WAL detected in %s: %w", file, err)
 		}
 
@@ -178,15 +192,7 @@ func (s *Store) Get(targetKey string) (string, bool) {
 		}
 	}
 
-	// 3. SSTables on disk (newest to oldest)
-	pattern := filepath.Join(s.dir, fmt.Sprintf("vault_%s_*.sst", s.nodeId))
-	sstFiles, err := filepath.Glob(pattern)
-	if err != nil {
-		return "", false
-	}
-
-	sort.Strings(sstFiles)
-
+	// 3. SSTables (newest to oldest)
 	for i := len(s.sstables) - 1; i >= 0; i-- {
 		curSst := s.sstables[i]
 		targetBytes := []byte(targetKey)
@@ -300,9 +306,15 @@ func (s *Store) flushWorker() {
 		}
 
 		err = newSst.Flush(task.data)
-		newSst.Close()
 		if err != nil {
+			newSst.Close()
 			handleErr(fmt.Errorf("failed to flush SSTable: %w", err))
+			continue
+		}
+
+		if err := newSst.LoadIndexBlock(); err != nil {
+			newSst.Close()
+			handleErr(fmt.Errorf("failed to load index block for new SSTable: %w", err))
 			continue
 		}
 
