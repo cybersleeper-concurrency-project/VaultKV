@@ -1,10 +1,14 @@
 package store
 
 import (
+	"bytes"
+	"encoding/binary"
 	"errors"
 	"fmt"
+	"io"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"sync"
 	"time"
@@ -154,7 +158,7 @@ func (s *Store) Set(key, value string) error {
 	return nil
 }
 
-func (s *Store) Get(key string) (string, bool) {
+func (s *Store) Get(targetKey string) (string, bool) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	// TODO: query in this exact order:
@@ -163,13 +167,13 @@ func (s *Store) Get(key string) (string, bool) {
 	// 3. SSTables on disk in order from newest to oldest
 
 	// 1. Check Active MemTable
-	if val, exists := s.data.Get(key); exists {
+	if val, exists := s.data.Get(targetKey); exists {
 		return val, true
 	}
 
 	// 2. Check Frozen MemTables (newest to oldest)
 	for i := len(s.frozenMemTs) - 1; i >= 0; i-- {
-		if val, exists := s.frozenMemTs[i].Get(key); exists {
+		if val, exists := s.frozenMemTs[i].Get(targetKey); exists {
 			return val, true
 		}
 	}
@@ -178,14 +182,47 @@ func (s *Store) Get(key string) (string, bool) {
 	pattern := filepath.Join(s.dir, fmt.Sprintf("vault_%s_*.sst", s.nodeId))
 	sstFiles, err := filepath.Glob(pattern)
 	if err != nil {
-		fmt.Errorf("failed to scan for SST: %w", err)
 		return "", false
 	}
 
 	sort.Strings(sstFiles)
 
 	for i := len(s.sstables) - 1; i >= 0; i-- {
-		// TODO: binser
+		curSst := s.sstables[i]
+		targetBytes := []byte(targetKey)
+		idx, found := slices.BinarySearchFunc(curSst.indexEntries, targetBytes, func(entry *IndexBlockEntry, target []byte) int {
+			return bytes.Compare(entry.keyBytes, target)
+		})
+
+		if found {
+			exactPtr := curSst.indexEntries[idx].ptr
+			keyLen := len(targetKey)
+
+			// 1. exactPtr points to the beginning of the record (the 2-byte keyLen).
+			// We already know keyLen, so we skip it (+2) to read the 4-byte valLen.
+			if _, err := curSst.fd.Seek(int64(exactPtr+2), io.SeekStart); err != nil {
+				return "", false
+			}
+
+			// 2. Read the 4-byte valLen
+			var valLen uint32
+			if err := binary.Read(curSst.fd, binary.LittleEndian, &valLen); err != nil {
+				return "", false
+			}
+
+			// 3. Skip over the actual Key string bytes using SeekCurrent
+			if _, err := curSst.fd.Seek(int64(keyLen), io.SeekCurrent); err != nil {
+				return "", false
+			}
+
+			// 4. Read the exact Value bytes!
+			valBytes := make([]byte, valLen)
+			if _, err := io.ReadFull(curSst.fd, valBytes); err != nil {
+				return "", false
+			}
+
+			return string(valBytes), true
+		}
 	}
 
 	return "", false
