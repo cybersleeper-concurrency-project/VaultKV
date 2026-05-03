@@ -343,6 +343,10 @@ func (e *SSTable) LoadIndexBlock() error {
 	if err := binary.Read(fd, binary.LittleEndian, &magic); err != nil {
 		return err
 	}
+
+	// Currently we don't check the data integrity as it would take a lot of time to validate a whole SST file chunks
+	// Instead of having a single checksum per file, it is better to have a checksum per small chunk (ex. 4KB)
+	// But yes, let's put this as TODO for now since it is quite high effort and deserves its own issue
 	if err := binary.Read(fd, binary.LittleEndian, &checksum); err != nil {
 		return err
 	}
@@ -358,6 +362,9 @@ func (e *SSTable) LoadIndexBlock() error {
 
 	// 3. Read everything between IndexOffset and FooterStart
 	indexSize := footerStart - int64(indexOffset)
+	if indexSize < 0 {
+		return fmt.Errorf("invalid index offset %d exceeds footer position %d", indexOffset, footerStart)
+	}
 	limitReader := io.LimitReader(fd, indexSize)
 
 	var indices []*IndexBlockEntry

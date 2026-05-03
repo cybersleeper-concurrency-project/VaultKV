@@ -139,6 +139,7 @@ func NewStore(dir, nodeID string) (*Store, error) {
 		wal:         wal,
 	}
 
+	// TODO: implement graceful shutdown
 	go storeObj.flushWorker()
 
 	return storeObj, nil
@@ -150,28 +151,48 @@ func (s *Store) Set(key, value string) error {
 	}
 
 	s.mu.Lock()
-	defer s.mu.Unlock()
 
 	err := s.wal.Append(&LogEntry{
 		Key:   key,
 		Value: value,
 	})
 	if err != nil {
+		s.mu.Unlock()
 		return err
 	}
 
 	s.data.Set(key, value)
 
+	var task *flushTask
 	if s.data.IsFull() {
-		if err := s.flushMemTable(); err != nil {
+		task, err = s.flushMemTable()
+		if err != nil {
+			s.mu.Unlock()
 			return err
 		}
+	}
+	s.mu.Unlock()
+
+	// Push to the background worker strictly OUTSIDE the lock
+	// This prevents a Channel-Mutex Deadlock if the flushChan is full
+	if task != nil {
+		s.flushChan <- task
 	}
 
 	return nil
 }
 
 func (s *Store) Get(targetKey string) (string, bool) {
+	val, found := s.getInternal(targetKey)
+
+	if found && val == tombstone {
+		return "", false
+	}
+
+	return val, found
+}
+
+func (s *Store) getInternal(targetKey string) (string, bool) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	// TODO: query in this exact order:
@@ -240,27 +261,36 @@ func (s *Store) Delete(key string) error {
 	}
 
 	s.mu.Lock()
-	defer s.mu.Unlock()
 
 	err := s.wal.Append(&LogEntry{
 		Key:   key,
 		Value: tombstone,
 	})
 	if err != nil {
+		s.mu.Unlock()
 		return err
 	}
 
 	s.data.Delete(key)
+
+	var task *flushTask
 	if s.data.IsFull() {
-		if err := s.flushMemTable(); err != nil {
+		task, err = s.flushMemTable()
+		if err != nil {
+			s.mu.Unlock()
 			return err
 		}
+	}
+	s.mu.Unlock()
+
+	if task != nil {
+		s.flushChan <- task
 	}
 
 	return nil
 }
 
-func (s *Store) flushMemTable() error {
+func (s *Store) flushMemTable() (*flushTask, error) {
 
 	timestamp := time.Now().UnixNano()
 	newWalName := fmt.Sprintf("vault_%s_%d.wal", s.nodeId, timestamp)
@@ -268,7 +298,7 @@ func (s *Store) flushMemTable() error {
 
 	newWal, err := NewWAL(filepath.Join(s.dir, newWalName))
 	if err != nil {
-		return fmt.Errorf("failed to create new WAL: %w", err)
+		return nil, fmt.Errorf("failed to create new WAL: %w", err)
 	}
 
 	frozenData := s.data
@@ -279,14 +309,11 @@ func (s *Store) flushMemTable() error {
 	s.data = NewSkiplist()
 	s.wal = newWal
 
-	// Push to the background worker
-	s.flushChan <- &flushTask{
+	return &flushTask{
 		data:    frozenData,
 		wal:     frozenWal,
 		sstName: newSstName,
-	}
-
-	return nil
+	}, nil
 }
 
 func (s *Store) flushWorker() {
@@ -299,23 +326,44 @@ func (s *Store) flushWorker() {
 			}
 		}
 
-		newSst, err := NewSSTable(filepath.Join(s.dir, task.sstName))
-		if err != nil {
-			handleErr(fmt.Errorf("failed to create new SSTable: %w", err))
-			continue
-		}
+		var newSst *SSTable
+		var err error
 
-		err = newSst.Flush(task.data)
-		if err != nil {
-			newSst.Close()
-			handleErr(fmt.Errorf("failed to flush SSTable: %w", err))
-			continue
-		}
+		// We cannot use 'continue' to skip a failed task because it permanently breaks the
+		// FIFO 1:1 alignment with 's.frozenMemTs', causing the wrong MemTable to be deleted from RAM
+		// If a disk failure occurs, our current solution is to retry until it succeeds to prevent silent data loss
 
-		if err := newSst.LoadIndexBlock(); err != nil {
-			newSst.Close()
-			handleErr(fmt.Errorf("failed to load index block for new SSTable: %w", err))
-			continue
+		// U might think ofa solution like DLQ, but then we need to think on how to scan through this
+		// DLQ for the GET query. It will be an anti-pattern to manage this as it's no differ than another Frozen MemTs
+
+		// RocksDB use "Wrtie Stalls" and "ReadOnly Mode" btw, so the current implementation of infinite retry is basically
+		// the step 1 of ghe chanon sol
+
+		for {
+			newSst, err = NewSSTable(filepath.Join(s.dir, task.sstName))
+			if err != nil {
+				handleErr(fmt.Errorf("failed to create new SSTable: %w", err))
+				time.Sleep(1 * time.Second)
+				continue
+			}
+
+			err = newSst.Flush(task.data)
+			if err != nil {
+				newSst.Close()
+				handleErr(fmt.Errorf("failed to flush SSTable: %w", err))
+				time.Sleep(1 * time.Second)
+				continue
+			}
+
+			if err := newSst.LoadIndexBlock(); err != nil {
+				newSst.Close()
+				handleErr(fmt.Errorf("failed to load index block for new SSTable: %w", err))
+				time.Sleep(1 * time.Second)
+				continue
+			}
+
+			// If we get here, the flush was completely successful!
+			break
 		}
 
 		if err := task.wal.Delete(); err != nil {
