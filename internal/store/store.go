@@ -5,6 +5,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 	"regexp"
 	"slices"
@@ -340,6 +341,9 @@ func (s *Store) flushWorker() {
 		// the step 1 of ghe chanon sol
 
 		for {
+			// Cleanup any partial file from previous attempt
+			_ = os.Remove(filepath.Join(s.dir, task.sstName))
+
 			newSst, err = NewSSTable(filepath.Join(s.dir, task.sstName))
 			if err != nil {
 				handleErr(fmt.Errorf("failed to create new SSTable: %w", err))
