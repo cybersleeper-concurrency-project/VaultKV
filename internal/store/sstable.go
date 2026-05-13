@@ -14,31 +14,27 @@ const maxEntryCntBytes = math.MaxUint16
 
 const magicNumber uint32 = 0xCAFEBABE
 
+// SSTable represents a single .sst file
 type SSTable struct {
-	file    *os.File
-	Entries []*SSTableLevel
+	fd           *os.File
+	filename     string
+	indexEntries []*IndexBlockEntry
 }
 
 type SSTableEntry struct {
 	LogEntries []*LogEntry
 }
 
-type SSTableLevel struct {
-	file *os.File
+type IndexBlockEntry struct {
+	ptr      uint32
+	keyBytes []byte
 }
 
 func (s *SSTable) Close() error {
 	var firstErr error
-	for _, level := range s.Entries {
-		if level != nil && level.file != nil {
-			if err := level.file.Close(); err != nil && firstErr == nil {
-				firstErr = err
-			}
-		}
-	}
 
-	if s.file != nil {
-		if err := s.file.Close(); err != nil && firstErr == nil {
+	if s.fd != nil {
+		if err := s.fd.Close(); err != nil {
 			firstErr = err
 		}
 	}
@@ -58,8 +54,9 @@ func NewSSTable(path string) (*SSTable, error) {
 	}
 
 	sstable := &SSTable{
-		file:    file,
-		Entries: make([]*SSTableLevel, 0),
+		fd:           file,
+		filename:     path,
+		indexEntries: make([]*IndexBlockEntry, 0),
 	}
 	return sstable, nil
 }
@@ -88,14 +85,14 @@ func (s *SSTable) Append(entry *SSTableEntry) error {
 	if entry == nil {
 		return fmt.Errorf("nil sst entry")
 	}
-	if s.file == nil {
+	if s.fd == nil {
 		return fmt.Errorf("sst is nil")
 	}
 
-	if err := entry.Encode(s.file); err != nil {
+	if err := entry.Encode(s.fd); err != nil {
 		return err
 	}
-	if err := s.file.Sync(); err != nil {
+	if err := s.fd.Sync(); err != nil {
 		return err
 	}
 
@@ -116,7 +113,6 @@ func (s *SSTable) Flush(skiplist *Skiplist) error {
 // Skiplist first
 func (s *SSTable) Compaction(toLevel int) {
 	// TODO
-
 }
 
 func (e *SSTableEntry) Encode(w io.Writer) error {
@@ -326,7 +322,77 @@ func (e *SSTableEntry) Decode(r io.Reader) error {
 	return nil
 }
 
-// TODO:
-// - Determine how we gonna store the entries from LSM to SST (see WAL, it should be similar storing implementation)
-// - Implement the MergeSSTableLevel
-// - Implement the Compaction
+func (e *SSTable) LoadIndexBlock() error {
+	// 1. Jump straight to the Footer (last 12 bytes of the file)
+	// (IndexOffset: 4 bytes, MagicNumber: 4 bytes, Checksum: 4 bytes)
+
+	fd := e.fd
+
+	footerStart, err := fd.Seek(-12, io.SeekEnd)
+	if err != nil {
+		return err
+	}
+
+	var indexOffset uint32
+	var magic uint32
+	var checksum uint32
+
+	if err := binary.Read(fd, binary.LittleEndian, &indexOffset); err != nil {
+		return err
+	}
+	if err := binary.Read(fd, binary.LittleEndian, &magic); err != nil {
+		return err
+	}
+
+	// Currently we don't check the data integrity as it would take a lot of time to validate a whole SST file chunks
+	// Instead of having a single checksum per file, it is better to have a checksum per small chunk (ex. 4KB)
+	// But yes, let's put this as TODO for now since it is quite high effort and deserves its own issue
+	if err := binary.Read(fd, binary.LittleEndian, &checksum); err != nil {
+		return err
+	}
+
+	if magic != magicNumber {
+		return fmt.Errorf("invalid magic number: got 0x%X, expected 0x%X", magic, magicNumber)
+	}
+
+	// 2. Jump to the exact byte where the Index Block starts
+	if _, err := fd.Seek(int64(indexOffset), io.SeekStart); err != nil {
+		return err
+	}
+
+	// 3. Read everything between IndexOffset and FooterStart
+	indexSize := footerStart - int64(indexOffset)
+	if indexSize < 0 {
+		return fmt.Errorf("invalid index offset %d exceeds footer position %d", indexOffset, footerStart)
+	}
+	limitReader := io.LimitReader(fd, indexSize)
+
+	var indices []*IndexBlockEntry
+
+	for {
+		var entry IndexBlockEntry
+		err := binary.Read(limitReader, binary.LittleEndian, &entry.ptr)
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return err
+		}
+
+		var keyLen uint16
+		if err := binary.Read(limitReader, binary.LittleEndian, &keyLen); err != nil {
+			return err
+		}
+
+		entry.keyBytes = make([]byte, keyLen)
+		if _, err := io.ReadFull(limitReader, entry.keyBytes); err != nil {
+			return err
+		}
+
+		indices = append(indices, &entry)
+	}
+
+	e.indexEntries = indices
+
+	return nil
+}
