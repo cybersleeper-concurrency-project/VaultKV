@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"testing"
@@ -169,7 +170,12 @@ func waitForFlush(t *testing.T, s *Store, minSSTs int) {
 	deadline := time.Now().Add(5 * time.Second)
 	for time.Now().Before(deadline) {
 		s.mu.RLock()
-		nSST := len(s.sstables)
+		nSST := 0
+		for _, lvl := range s.SSTLevels {
+			if lvl != nil {
+				nSST += len(lvl.Tables)
+			}
+		}
 		nFrozen := len(s.frozenMemTs)
 		s.mu.RUnlock()
 		if nSST >= minSSTs && nFrozen == 0 {
@@ -179,8 +185,16 @@ func waitForFlush(t *testing.T, s *Store, minSSTs int) {
 	}
 	s.mu.RLock()
 	defer s.mu.RUnlock()
+
+	nSST := 0
+	for _, lvl := range s.SSTLevels {
+		if lvl != nil {
+			nSST += len(lvl.Tables)
+		}
+	}
+
 	t.Fatalf("flush did not complete: ssts=%d (want >=%d), frozen=%d (want 0)",
-		len(s.sstables), minSSTs, len(s.frozenMemTs))
+		nSST, minSSTs, len(s.frozenMemTs))
 }
 
 // forceFlush writes enough 1MB blobs to exceed the 4MB memtable threshold and
@@ -237,6 +251,12 @@ func TestStore_RecoveryFromSST(t *testing.T) {
 		t.Fatalf("Close failed: %v", err)
 	}
 
+	files, _ := os.ReadDir(dir)
+	fmt.Printf("Files in dir %s:\n", dir)
+	for _, f := range files {
+		fmt.Printf("- %s\n", f.Name())
+	}
+
 	// Reopen pointing at the same directory — data must come back from SST
 	s2, err := NewStore(dir, nodeID)
 	if err != nil {
@@ -244,7 +264,13 @@ func TestStore_RecoveryFromSST(t *testing.T) {
 	}
 	defer s2.Close()
 
-	if len(s2.sstables) == 0 {
+	nSST2 := 0
+	for _, lvl := range s2.SSTLevels {
+		if lvl != nil {
+			nSST2 += len(lvl.Tables)
+		}
+	}
+	if nSST2 == 0 {
 		t.Fatalf("expected recovered store to load at least 1 SSTable, got 0")
 	}
 
@@ -313,7 +339,7 @@ func TestStore_CorruptedSSTOnStartupErrors(t *testing.T) {
 	nodeID := "corrupt_sst_testnode"
 
 	// Drop a malformed file matching the SST glob
-	badPath := filepath.Join(dir, fmt.Sprintf("vault_%s_1234567890.sst", nodeID))
+	badPath := filepath.Join(dir, fmt.Sprintf("vault_%s_L0_1234567890.sst", nodeID))
 	if err := os.WriteFile(badPath, []byte("definitely not a real sst"), 0644); err != nil {
 		t.Fatalf("WriteFile failed: %v", err)
 	}
@@ -350,6 +376,232 @@ func TestStore_GetFromFrozenMemTable(t *testing.T) {
 	val, ok = s.Get("canary")
 	if !ok || val != "alive" {
 		t.Errorf("canary lost after flush completion: val=%q ok=%v", val, ok)
+	}
+}
+
+// makeSSTFile builds a real on-disk SST from a key→value map, loads its index,
+// and returns the open SST. Caller is responsible for Close.
+func makeSSTFile(t *testing.T, dir, name string, entries map[string]string) *SST {
+	t.Helper()
+	// Sort keys so the skiplist gets them in lexicographic order (a requirement
+	// for SST point lookups to work correctly).
+	keys := make([]string, 0, len(entries))
+	for k := range entries {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+
+	sl := NewSkiplist()
+	for _, k := range keys {
+		sl.Set(k, entries[k])
+	}
+
+	path := filepath.Join(dir, name)
+	sst, err := NewSST(path)
+	if err != nil {
+		t.Fatalf("NewSST(%s) failed: %v", name, err)
+	}
+	if err := sst.Flush(sl); err != nil {
+		sst.Close()
+		t.Fatalf("Flush(%s) failed: %v", name, err)
+	}
+	if err := sst.LoadIndexBlock(); err != nil {
+		sst.Close()
+		t.Fatalf("LoadIndexBlock(%s) failed: %v", name, err)
+	}
+	return sst
+}
+
+func TestMergeSSTs_NewestWins(t *testing.T) {
+	dir := t.TempDir()
+
+	older := makeSSTFile(t, dir, "older.sst", map[string]string{
+		"shared":     "old_val",
+		"unique_old": "x",
+	})
+	defer older.Close()
+	newer := makeSSTFile(t, dir, "newer.sst", map[string]string{
+		"shared":     "new_val",
+		"unique_new": "y",
+	})
+	defer newer.Close()
+
+	merged, err := mergeSSTs([]*SST{older, newer}, false)
+	if err != nil {
+		t.Fatalf("mergeSSTs failed: %v", err)
+	}
+
+	got := make(map[string]string, len(merged.LogEntries))
+	for _, e := range merged.LogEntries {
+		got[e.Key] = e.Value
+	}
+
+	if got["shared"] != "new_val" {
+		t.Errorf("shared key: expected new_val, got %q", got["shared"])
+	}
+	if got["unique_old"] != "x" {
+		t.Errorf("unique_old: expected x, got %q", got["unique_old"])
+	}
+	if got["unique_new"] != "y" {
+		t.Errorf("unique_new: expected y, got %q", got["unique_new"])
+	}
+}
+
+func TestMergeSSTs_TombstonePassthrough(t *testing.T) {
+	dir := t.TempDir()
+
+	older := makeSSTFile(t, dir, "older.sst", map[string]string{"key": "live_val"})
+	defer older.Close()
+	// The newer SST carries a tombstone for the same key — it must survive the merge.
+	newer := makeSSTFile(t, dir, "newer.sst", map[string]string{"key": tombstone})
+	defer newer.Close()
+
+	merged, err := mergeSSTs([]*SST{older, newer}, false)
+	if err != nil {
+		t.Fatalf("mergeSSTs failed: %v", err)
+	}
+	if len(merged.LogEntries) != 1 {
+		t.Fatalf("expected 1 merged entry, got %d", len(merged.LogEntries))
+	}
+	if merged.LogEntries[0].Value != tombstone {
+		t.Errorf("tombstone must survive merge at intermediate level; got %q", merged.LogEntries[0].Value)
+	}
+}
+
+func TestMergeSSTs_SortedOutput(t *testing.T) {
+	dir := t.TempDir()
+
+	sst1 := makeSSTFile(t, dir, "a.sst", map[string]string{"apple": "1", "cherry": "3"})
+	defer sst1.Close()
+	sst2 := makeSSTFile(t, dir, "b.sst", map[string]string{"banana": "2", "date": "4"})
+	defer sst2.Close()
+
+	merged, err := mergeSSTs([]*SST{sst1, sst2}, false)
+	if err != nil {
+		t.Fatalf("mergeSSTs failed: %v", err)
+	}
+
+	want := []struct{ k, v string }{
+		{"apple", "1"}, {"banana", "2"}, {"cherry", "3"}, {"date", "4"},
+	}
+	if len(merged.LogEntries) != len(want) {
+		t.Fatalf("expected %d entries, got %d", len(want), len(merged.LogEntries))
+	}
+	for i, w := range want {
+		e := merged.LogEntries[i]
+		if e.Key != w.k || e.Value != w.v {
+			t.Errorf("entry[%d]: expected {%s: %s}, got {%s: %s}", i, w.k, w.v, e.Key, e.Value)
+		}
+	}
+}
+
+func TestMergeSSTs_EmptyInput(t *testing.T) {
+	merged, err := mergeSSTs(nil, false)
+	if err != nil {
+		t.Fatalf("mergeSSTs(nil) failed: %v", err)
+	}
+	if len(merged.LogEntries) != 0 {
+		t.Errorf("expected 0 entries from empty input, got %d", len(merged.LogEntries))
+	}
+}
+
+func TestMergeSSTs_TombstoneDroppedAtBottom(t *testing.T) {
+	dir := t.TempDir()
+	// older SST has a live value; newer SST has a tombstone for the same key.
+	older := makeSSTFile(t, dir, "older.sst", map[string]string{"key": "live_val", "other": "kept"})
+	defer older.Close()
+	newer := makeSSTFile(t, dir, "newer.sst", map[string]string{"key": tombstone})
+	defer newer.Close()
+
+	merged, err := mergeSSTs([]*SST{older, newer}, true /* bottom level */)
+	if err != nil {
+		t.Fatalf("mergeSSTs failed: %v", err)
+	}
+
+	for _, e := range merged.LogEntries {
+		if e.Key == "key" {
+			t.Errorf("tombstone entry for 'key' must be dropped at bottom level, but got value %q", e.Value)
+		}
+	}
+	if len(merged.LogEntries) != 1 || merged.LogEntries[0].Key != "other" {
+		t.Errorf("expected only 'other' to survive; got %v", merged.LogEntries)
+	}
+}
+
+func TestMergeSSTs_AllTombstonesEmptyResult(t *testing.T) {
+	dir := t.TempDir()
+	// Every key is a tombstone — the bottom-level merge should produce nothing.
+	sst := makeSSTFile(t, dir, "all_tomb.sst", map[string]string{
+		"a": tombstone,
+		"b": tombstone,
+	})
+	defer sst.Close()
+
+	merged, err := mergeSSTs([]*SST{sst}, true /* bottom level */)
+	if err != nil {
+		t.Fatalf("mergeSSTs failed: %v", err)
+	}
+	if len(merged.LogEntries) != 0 {
+		t.Errorf("expected empty result when all entries are tombstones at bottom level, got %d entries", len(merged.LogEntries))
+	}
+}
+
+// waitForLevel polls until SSTLevels[level] holds at least minTables SSTables.
+func waitForLevel(t *testing.T, s *Store, level, minTables int) {
+	t.Helper()
+	deadline := time.Now().Add(10 * time.Second)
+	for time.Now().Before(deadline) {
+		s.mu.RLock()
+		n := 0
+		if level < len(s.SSTLevels) && s.SSTLevels[level] != nil {
+			n = len(s.SSTLevels[level].Tables)
+		}
+		s.mu.RUnlock()
+		if n >= minTables {
+			return
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Fatalf("level %d did not reach %d tables within deadline", level, minTables)
+}
+
+func TestStore_CompactionL0ToL1(t *testing.T) {
+	s, cleanup := setupStore(t, "compact_l0l1")
+	defer cleanup()
+
+	// Trigger maxLevel0Files separate L0 flushes, each with a distinct key prefix
+	// so keys from different batches don't collide in the merged SST.
+	var allKeys []string
+	for i := 0; i < maxLevel0Files; i++ {
+		keys := forceFlush(t, s, fmt.Sprintf("batch%d", i))
+		allKeys = append(allKeys, keys...)
+	}
+
+	// Once L0 accumulates maxLevel0Files SSTables the compaction worker fires and
+	// merges them all into a single L1 SST.
+	waitForLevel(t, s, 1, 1)
+
+	// L0 must be below the compaction threshold — the 4 compacted SSTs were
+	// removed. It may not be zero: a 5th flush can sneak in while the merge is
+	// running (the memtable accumulates across forceFlush calls), but it will
+	// always be less than maxLevel0Files.
+	s.mu.RLock()
+	var l0count int
+	if len(s.SSTLevels) > 0 && s.SSTLevels[0] != nil {
+		l0count = len(s.SSTLevels[0].Tables)
+	}
+	s.mu.RUnlock()
+	if l0count >= maxLevel0Files {
+		t.Errorf("expected L0 below compaction threshold after compaction, got %d tables", l0count)
+	}
+
+	// Every key written before compaction must still be readable from L1.
+	want := strings.Repeat("x", 1024*1024)
+	for _, k := range allKeys {
+		val, ok := s.Get(k)
+		if !ok || val != want {
+			t.Errorf("key %s not readable after compaction (ok=%v, len(val)=%d)", k, ok, len(val))
+		}
 	}
 }
 
